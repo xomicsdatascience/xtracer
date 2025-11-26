@@ -1,0 +1,11 @@
+__pycache__/
+.idea/
+
+/build
+/dist
+/sdist
+*.egg-info/
+
+xtracer/sdk/_mbisdk.pyd
+xtracer/sdk/MBI_SDK.dll
+xtracer/sdk/mbisdk.py
