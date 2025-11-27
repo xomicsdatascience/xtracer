@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xtracer"
+name = "xtracer-pamaf"
 dynamic = ["version"]
 description = "Converting PAMAF .mbi data to pseudo-MS/MS files by untargeted methods."
 readme = "README.md"

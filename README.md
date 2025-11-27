@@ -25,7 +25,7 @@ We recommend using [Conda](https://www.anaconda.com/) to create a Python environ
 
 2. Install xTracer
     ```bash
-    pip install xtracer
+    pip install xtracer-pamaf
     ```
 
 3. SDK access
