@@ -11,7 +11,8 @@ Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://www.b
 
 ---
 ### Datasets
-Varying sample load dataset and varying throughput dataset by PAMAF acquisition can be downloaded from [MSV000099577](ftp://massive-ftp.ucsd.edu/v11/MSV000099577/)
+Varying sample load dataset and varying throughput dataset by PAMAF acquisition can be downloaded from [MSV000099577](https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession=MSV000099577
+)
 
 ### Installation
 We recommend using [Conda](https://www.anaconda.com/) to create a Python environment for using xTracer on Windows.
