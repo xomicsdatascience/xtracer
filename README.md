@@ -29,7 +29,7 @@ We recommend using [Conda](https://www.anaconda.com/) to create a Python environ
     ```
 
 3. SDK access
->   Please send an SDK request email to [Mobilion Inc.](mailto:daniel.debord@mobilionsystems.com), 
+>   Please send an SDK request email to [Mobilion Inc.](mailto:support@mobilionsystems.com), 
 >   and then copy the file *_mbisdk.pyd, MBI_SDK.dll and mbisdk.py* into the sdk folder under the xTracer installation directory.
 
 ---
