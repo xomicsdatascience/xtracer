@@ -9,3 +9,10 @@ __pycache__/
 xtracer/sdk/_mbisdk.pyd
 xtracer/sdk/MBI_SDK.dll
 xtracer/sdk/mbisdk.py
+
+data/
+docs/
+lib/
+paper/
+plt/
+script/
