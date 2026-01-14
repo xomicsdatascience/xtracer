@@ -17,7 +17,7 @@ class MyFormatter(logging.Formatter):
 
 class Logger():
     # class variables
-    logger = logging.getLogger('MobiTracer')
+    logger = logging.getLogger('xTracer')
     logger.setLevel(logging.DEBUG)
     logger.propagate = False # no forward transfer
 

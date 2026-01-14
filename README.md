@@ -54,8 +54,8 @@ optional arguments for users:
   -tol_ppm TOL_PPM               Specify the ppm tolerance of signal in m/z dimension. Default: 30
   -tol_iso_num TOL_ISO_NUM       Specify how many isotopes should have to be a precursor. Default: 2, i.e. M, M+1H, M+2H
   -tol_pcc TOL_PCC               Specify the PCC tolerance when two signal are related. Default: 0.3
-  -tol_point_num TOL_POINT_NUM   Specify the point num tolerance that a signal should have. Default: 9
-  -tol_fg_num TOL_FG_NUM         Specify the fragment ions num tolerance that a spectrum should have. Default: 8
+  -tol_point_num TOL_POINT_NUM   Specify the point num tolerance that a signal should have. Default: 7
+  -tol_fg_num TOL_FG_NUM         Specify the fragment ions num tolerance that a spectrum should have. Default: 10
   -xim_across_cycle_num          Specify the odd XIM cycle span when summing frames. Default: 3
   -xic_across_cycle_num          Specify the odd XIC cycle span when extracting XIC. Default: 7
 ```

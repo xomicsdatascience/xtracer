@@ -4,7 +4,7 @@ from xtracer import xic, xim, xix
 from xtracer.log import Logger
 
 def parse_args():
-    parser = argparse.ArgumentParser('MobiTracer')
+    parser = argparse.ArgumentParser('xTracer')
 
     # required=True
     parser.add_argument(
@@ -23,6 +23,9 @@ def parse_args():
     parser.add_argument('-xim',
                         action='store_true',
                         help='Using XIM-based method')
+    parser.add_argument('-write_pcc',
+                        action='store_false',
+                        help='Write PCC values or not')
 
     # common params
     parser.add_argument(
@@ -66,14 +69,14 @@ def parse_args():
         help='Specify the PCC tolerance when two signal are related. Default: 0.3'
     )
     parser.add_argument(
-        '-tol_point_num', type=int, default=9,
+        '-tol_point_num', type=int, default=7,
         help='Specify the point num tolerance that a signal should have. '
-             'Default: 9'
+             'Default: 7'
     )
     parser.add_argument(
         '-tol_fg_num', type=int, default=8,
         help='Specify the fragment ions num tolerance that a spectrum should '
-             'have. Default: 8'
+             'have. Default: 10'
     )
 
     # for xim
@@ -104,7 +107,7 @@ def main():
         outdir.mkdir(exist_ok=True)
         Logger.set_logger(outdir)
         logger = Logger.get_logger()
-        logger.info('MobiTracer, for SLIM with high resolution ion mobility')
+        logger.info('xTracer, for SLIM with high resolution ion mobility')
         for fi, fin in enumerate(fin_v):
             logger.info(f'Processing {fi+1}/{len(fin_v)}')
             fout = outdir / (fin.stem + '.mgf')
@@ -114,7 +117,7 @@ def main():
         outdir.mkdir(exist_ok=True)
         Logger.set_logger(outdir)
         logger = Logger.get_logger()
-        logger.info('MobiTracer, for SLIM with high resolution ion mobility')
+        logger.info('xTracer, for SLIM with high resolution ion mobility')
         for fi, fin in enumerate(fin_v):
             logger.info(f'Processing {fi+1}/{len(fin_v)}')
             fout = outdir / (fin.stem + '.mgf')
@@ -124,7 +127,7 @@ def main():
         outdir.mkdir(exist_ok=True)
         Logger.set_logger(outdir)
         logger = Logger.get_logger()
-        logger.info('MobiTracer, for SLIM with high resolution ion mobility')
+        logger.info('xTracer, for SLIM with high resolution ion mobility')
         for fi, fin in enumerate(fin_v):
             logger.info(f'Processing {fi + 1}/{len(fin_v)}')
             fout = outdir / (fin.stem + '.mgf')

@@ -22,6 +22,7 @@ def main(args, indir, outdir):
     with open(outdir, "w") as f:
         buffer = StringIO()
         buffer_write = buffer.write
+        counter = 1
         start = args.xic_across_cycle_num
         for frame_i in range(start, len(frame_rts) - start):
             if frame_levels[frame_i] != 2: # level-1 --> MS2
@@ -144,10 +145,14 @@ def main(args, indir, outdir):
                 fg_idx = idx_max2_points[pcc_v > args.tol_pcc]
                 scan_mz = frame2_mz[fg_idx]
                 scan_height = frame2_height[fg_idx]
+                scan_pcc = pcc_v[pcc_v > args.tol_pcc]
+                assert len(scan_mz) == len(scan_pcc)
 
                 # write
                 for pr_charge in pr_charges:
                     buffer_write("BEGIN IONS\n")
+                    buffer_write(f"TITLE={counter}.{pr_charge}\n")
+                    counter += 1
                     buffer_write(f"RTINSECONDS={frame_rt:.2f}\n")
                     buffer_write(f"AT={pr_at:.2f}\n")
                     buffer_write(f"PEPMASS={pr_mz:.6f} {pr_height:.2f}\n")
@@ -155,9 +160,17 @@ def main(args, indir, outdir):
                     if scan_mz.size:
                         mz_str = np.char.mod("%.6f", scan_mz)
                         intensity_str = np.char.mod("%.2f", scan_height)
-                        peak_lines = np.char.add(np.char.add(mz_str, " "),
-                                                 intensity_str)
-                        buffer_write("\n".join(peak_lines.tolist()))
+                        pcc_str = np.char.mod("%.2f", scan_pcc)
+                        tmp = np.char.add(np.array(mz_str, dtype=str), ' ')
+                        tmp = np.char.add(
+                            tmp, np.array(intensity_str, dtype=str)
+                        )
+                        tmp = np.char.add(tmp, ' ')
+                        if args.write_pcc:
+                            tmp = np.char.add(
+                                tmp, np.array(pcc_str, dtype=str)
+                            )
+                        buffer_write("\n".join(tmp.tolist()))
                         buffer_write("\n")
                     buffer_write("END IONS\n\n")
                     if buffer.tell() >= MGF_BUFFER_FLUSH:
