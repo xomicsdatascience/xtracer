@@ -45,9 +45,9 @@ def parse_args():
         help='Specify the minimum at value of signals. Default: 90'
     )
     parser.add_argument(
-        '-tol_at_area', type=float, default=2.5,
+        '-tol_at_area', type=float, default=2.0,
         help='Specify the millisecond tolerance of signal in at dimension. '
-             'Default: 2.5'
+             'Default: 2.0'
     )
     parser.add_argument(
         '-tol_at_shift', type=float, default=1,
@@ -65,16 +65,16 @@ def parse_args():
              'Default: 2, i.e. M, M+1H, M+2H'
     )
     parser.add_argument(
-        '-tol_pcc', type=float, default=0.3,
-        help='Specify the PCC tolerance when two signal are related. Default: 0.3'
+        '-tol_pcc', type=float, default=0.4,
+        help='Specify the PCC tolerance when two signal are related. Default: 0.4'
     )
     parser.add_argument(
-        '-tol_point_num', type=int, default=7,
+        '-tol_point_num', type=int, default=5,
         help='Specify the point num tolerance that a signal should have. '
-             'Default: 7'
+             'Default: 5'
     )
     parser.add_argument(
-        '-tol_fg_num', type=int, default=8,
+        '-tol_fg_num', type=int, default=10,
         help='Specify the fragment ions num tolerance that a spectrum should '
              'have. Default: 10'
     )
