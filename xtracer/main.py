@@ -24,7 +24,7 @@ def parse_args():
                         action='store_true',
                         help='Using XIM-based method')
     parser.add_argument('-write_pcc',
-                        action='store_false',
+                        action='store_true',
                         help='Write PCC values or not')
 
     # common params

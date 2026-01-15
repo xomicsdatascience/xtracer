@@ -45,16 +45,17 @@ optional arguments for users:
   -out_name OUT_NAME             Specify the folder name that contains .mgf files. Default: mgf_xtracer
   -xic                           Using XIC-based method to calculate PCC
   -xim                           Using XIM-based method to calculate PCC
+  -write_pcc                     Specify whether to write PCC values to MS/MS files. Default: False
   -pr_mz_min PR_MZ_MIN           Specify the minimum m/z value of precursors. Default: 200
   -charge_min CHARGE_MIN         Specify the minimum charge of precursors. Default: 1
   -charge_max CHARGE_MAX         Specify the maximum charge of precursors. Default: 4
   -at_min AT_MIN                 Specify the minimum arrival time (at) value of signals. Default: 90 ms
-  -tol_at_area TOL_AT_AREA       Specify the millisecond tolerance of signal in at dimension. Default: 2.5
+  -tol_at_area TOL_AT_AREA       Specify the millisecond tolerance of signal in at dimension. Default: 2.0
   -tol_at_shift TOL_AT_SHIFT     Specify the millisecond tolerance when considering signal related. Default: 1
   -tol_ppm TOL_PPM               Specify the ppm tolerance of signal in m/z dimension. Default: 30
   -tol_iso_num TOL_ISO_NUM       Specify how many isotopes should have to be a precursor. Default: 2, i.e. M, M+1H, M+2H
-  -tol_pcc TOL_PCC               Specify the PCC tolerance when two signal are related. Default: 0.3
-  -tol_point_num TOL_POINT_NUM   Specify the point num tolerance that a signal should have. Default: 7
+  -tol_pcc TOL_PCC               Specify the PCC tolerance when two signal are related. Default: 0.4
+  -tol_point_num TOL_POINT_NUM   Specify the point num tolerance that a signal should have. Default: 5
   -tol_fg_num TOL_FG_NUM         Specify the fragment ions num tolerance that a spectrum should have. Default: 10
   -xim_across_cycle_num          Specify the odd XIM cycle span when summing frames. Default: 3
   -xic_across_cycle_num          Specify the odd XIC cycle span when extracting XIC. Default: 7
