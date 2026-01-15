@@ -8,7 +8,7 @@ try:
 except ImportError:
     raise RuntimeError(
         "SDK to read .mbi files is required. "
-        "Please email daniel.debord@mobilionsystems.com to request SDK. "
+        "Please email support@mobilionsystems.com to request SDK. "
         "Then, copy the _mbisdk.pyd, MBI_SDK.dll and mbisdk.py to the sdk folder"
     )
 
