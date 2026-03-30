@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from xtracer import xic, xim, xix
+from xtracer import search
 from xtracer.log import Logger
 
 def parse_args():
@@ -17,12 +17,12 @@ def parse_args():
     )
 
     # optional
-    parser.add_argument('-xic',
-                        action='store_true',
-                        help='Using XIC-based method')
-    parser.add_argument('-xim',
-                        action='store_true',
-                        help='Using XIM-based method')
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument('-xic', action='store_true', help='XIC-based PCC')
+    mode_group.add_argument('-xim', action='store_true', help='XIM-based PCC')
+    mode_group.add_argument(
+        '-xix', action='store_true', help='XIC+XIM averaged PCC'
+    )
     parser.add_argument('-write_pcc',
                         action='store_true',
                         help='Write PCC values or not')
@@ -100,40 +100,20 @@ def parse_args():
 def main():
     args = parse_args()
 
+    MODE_MAP = {"xic": args.xic, "xim": args.xim, "xix": args.xix}
+    run_mode = [k for k, v in MODE_MAP.items() if v][0]
+
     fin_v = list(Path(args.ws_in).glob('*.mbi'))
 
-    if args.xim and not args.xic:
-        outdir = args.ws_in / args.out_name
-        outdir.mkdir(exist_ok=True)
-        Logger.set_logger(outdir)
-        logger = Logger.get_logger()
-        logger.info('xTracer, for SLIM with high resolution ion mobility')
-        for fi, fin in enumerate(fin_v):
-            logger.info(f'Processing {fi+1}/{len(fin_v)}')
-            fout = outdir / (fin.stem + '.mgf')
-            xim.main(args, fin, fout)
-    elif args.xic and not args.xim:
-        outdir = args.ws_in / args.out_name
-        outdir.mkdir(exist_ok=True)
-        Logger.set_logger(outdir)
-        logger = Logger.get_logger()
-        logger.info('xTracer, for SLIM with high resolution ion mobility')
-        for fi, fin in enumerate(fin_v):
-            logger.info(f'Processing {fi+1}/{len(fin_v)}')
-            fout = outdir / (fin.stem + '.mgf')
-            xic.main(args, fin, fout)
-    elif args.xim and args.xic:
-        outdir = args.ws_in / args.out_name
-        outdir.mkdir(exist_ok=True)
-        Logger.set_logger(outdir)
-        logger = Logger.get_logger()
-        logger.info('xTracer, for SLIM with high resolution ion mobility')
-        for fi, fin in enumerate(fin_v):
-            logger.info(f'Processing {fi + 1}/{len(fin_v)}')
-            fout = outdir / (fin.stem + '.mgf')
-            xix.main(args, fin, fout)
-    else:
-        raise Exception('You must specify either -xim or -xic')
+    outdir = args.ws_in / args.out_name
+    outdir.mkdir(exist_ok=True)
+    Logger.set_logger(outdir)
+    logger = Logger.get_logger()
+    logger.info('xTracer, for SLIM with high resolution ion mobility')
+    for fi, fin in enumerate(fin_v):
+        logger.info(f'Processing {fi+1}/{len(fin_v)} in {run_mode} mode')
+        fout = outdir / (fin.stem + '.mgf')
+        search.main(args, fin, fout, run_mode)
 
 
 if __name__ == '__main__':
