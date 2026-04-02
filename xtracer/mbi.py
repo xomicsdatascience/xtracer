@@ -42,7 +42,7 @@ class MBIReader:
 
 
     @profile
-    def get_frame_data(self, frame_idx):
+    def _get_frame_data(self, frame_idx):
         frame = self.mbi.GetFrame(frame_idx)
         csr_tuple = frame.GetFrameDataAsCSRComponents()
         _, frame_height, indices_vec, indptr_vec = csr_tuple
@@ -95,14 +95,26 @@ class MBIReader:
 
 
     @profile
-    def load_frames_to_deque(self, idx):
+    def load_frames_to_deque(self, idx_quad, idx_frame):
         if len(self.deque_frame1) == 0:  # loop start
             for i in range(-self.frame_expand_num,
                            self.frame_expand_num + 1):
-                frame_idx = idx + i * self.cycle_frame_num
-                self.deque_frame1.append(self.get_frame_data(frame_idx))
-                self.deque_frame2.append(self.get_frame_data(frame_idx+1))
+                frame_idx = idx_frame + i * self.cycle_frame_num
+                self.deque_frame1.append(self._get_frame_data(frame_idx))
+                self.deque_frame2.append(self._get_frame_data(frame_idx + 1))
         else:
-            frame_idx = idx + self.frame_expand_num * self.cycle_frame_num
-            self.deque_frame1.append(self.get_frame_data(frame_idx))
-            self.deque_frame2.append(self.get_frame_data(frame_idx + 1))
+            frame_idx = idx_frame + self.frame_expand_num * self.cycle_frame_num
+            self.deque_frame1.append(self._get_frame_data(frame_idx))
+            self.deque_frame2.append(self._get_frame_data(frame_idx + 1))
+
+    def get_frame_times(self, q_idx=None):
+        return np.array(self.mbi.GetRetentionTimes())
+
+    def get_frame_levels(self, q_idx=None):
+        raws = np.array(self.mbi.GetFrameMSLevels())
+        levels = 3 - raws # 1 --> 2, 2 --> 1
+        assert np.all(np.isin(levels, [1, 2]))
+        return levels
+
+    def get_quad_num(self):
+        return 1

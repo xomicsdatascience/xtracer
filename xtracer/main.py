@@ -9,19 +9,21 @@ def parse_args():
     # required=True
     parser.add_argument(
         '-ws_in', required=True,
-        help='Specify the folder that contains .mbi files.'
+        help='Specify the folder that contains .mbi or .d files.'
     )
     parser.add_argument(
         '-out_name', type=str, default='mgf_xtracer',
-        help='Specify the folder name that contains .mgf files.'
+        help='Specify the output folder name where the mgf will be saved.'
     )
-
+    parser.add_argument(
+        '-data_type', required=True,
+        help='Specify the type of ms file. PAMAF or diaPASEF are supported.'
+    )
     # optional
     mode_group = parser.add_mutually_exclusive_group(required=True)
-    mode_group.add_argument('-xic', action='store_true', help='XIC-based PCC')
-    mode_group.add_argument('-xim', action='store_true', help='XIM-based PCC')
+    mode_group.add_argument('-xic_only', action='store_true', help='XIC-based PCC')
     mode_group.add_argument(
-        '-xix', action='store_true', help='XIC+XIM averaged PCC'
+        '-xic_xim', action='store_true', help='XIC+XIM averaged PCC'
     )
     parser.add_argument('-write_pcc',
                         action='store_true',
@@ -41,7 +43,7 @@ def parse_args():
         help='Specify the maximum charge of precursors. Default: 4'
     )
     parser.add_argument(
-        '-at_min', type=float, default=90,
+        '-at_min', type=float, default=0.1,
         help='Specify the minimum at value of signals. Default: 90'
     )
     parser.add_argument(
@@ -81,7 +83,7 @@ def parse_args():
 
     # for xim
     parser.add_argument(
-        '-xim_across_cycle_num', type=int, default=3,
+        '-frame_merge_num', type=int, default=3,
         help='Specify the odd XIM cycle span when summing frames. Default: 3'
     )
 
@@ -100,18 +102,23 @@ def parse_args():
 def main():
     args = parse_args()
 
-    MODE_MAP = {"xic": args.xic, "xim": args.xim, "xix": args.xix}
+    MODE_MAP = {"xic_only": args.xic_only, "xic_xim": args.xic_xim}
     run_mode = [k for k, v in MODE_MAP.items() if v][0]
 
-    fin_v = list(Path(args.ws_in).glob('*.mbi'))
+    if args.data_type.lower() == 'pamaf':
+        fin_v = list(Path(args.ws_in).glob('*.mbi'))
+    elif args.data_type.lower() == 'diapasef':
+        fin_v = [x for x in Path(args.ws_in).glob('*.d') if x.is_dir()]
+    else:
+        raise ValueError(f'Invalid data type {args.data_type}, should be [pamaf, diapasef]')
 
     outdir = args.ws_in / args.out_name
     outdir.mkdir(exist_ok=True)
     Logger.set_logger(outdir)
     logger = Logger.get_logger()
     logger.info('xTracer, for SLIM with high resolution ion mobility')
-    for fi, fin in enumerate(fin_v):
-        logger.info(f'Processing {fi+1}/{len(fin_v)} in {run_mode} mode')
+    for fi, fin in enumerate(fin_v[::-1]):
+        logger.info(f'Processing {fi+1}/{len(fin_v)} in {run_mode} mode: {fin.name}')
         fout = outdir / (fin.stem + '.mgf')
         search.main(args, fin, fout, run_mode)
 

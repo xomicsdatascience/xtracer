@@ -3,6 +3,7 @@ import numpy as np
 import numba.typed
 from xtracer.utils import *
 from xtracer.mbi import MBIReader
+from xtracer.tims import Tims
 from io import StringIO
 
 try:
@@ -11,227 +12,185 @@ except:
     profile = lambda x: x
 
 
+def get_points(xics1_v, ats1_v, mzs1_v, ints1_v, cycle1_v):
+    xics1 = np.vstack(xics1_v)
+    ats1 = np.concatenate(ats1_v)
+    mzs1 = np.concatenate(mzs1_v)
+    ints1 = np.concatenate(ints1_v)
+    cycle1 = np.concatenate(cycle1_v)
+    idx = np.argsort(mzs1)
+    mzs = mzs1[idx]
+    ats = ats1[idx]
+    ints = ints1[idx]
+    cycles = cycle1[idx]
+    xics = xics1[idx]
+    return cycles, ats, mzs, ints, xics
+
 @profile
 def main(args, indir, outdir, mode):
-    # read .mbi
-    if mode == 'xim':
-        across_cycle_num = args.xim_across_cycle_num
-    else:
-        across_cycle_num = args.xic_across_cycle_num
+    # read
+    across_cycle_num = args.xic_across_cycle_num
 
-    mbi = MBIReader(indir, across_cycle_num)
+    if indir.suffix == '.mbi':
+        ms = MBIReader(indir, across_cycle_num)
+    elif indir.suffix == '.d':
+        ms = Tims(indir, across_cycle_num)
     start = across_cycle_num
-
-    # loop cycle
-    frame_rts = np.array(mbi.GetRetentionTimes())
-    frame_levels = np.array(mbi.GetFrameMSLevels())
 
     with open(outdir, "w") as f:
         buffer = StringIO()
         buffer_write = buffer.write
-        counter = 1
-        for frame_i in range(start, len(frame_rts) - start):
-            if frame_levels[frame_i] != 2: # level-1 --> MS2
-                continue
+        pseudo_count = 0
+        quad_num = ms.get_quad_num()
+        for quad_idx in range(1, 1+quad_num):
+            # loop cycle
+            frame_rts = ms.get_frame_times(quad_idx)
+            frame_levels = ms.get_frame_levels(quad_idx)
 
-            # load frames
-            mbi.load_frames_to_deque(frame_i)
-            frame1_deque = mbi.deque_frame1
-            frame2_deque = mbi.deque_frame2
-
-            # merge frames for maximum points
-            frame1_at, frame1_mz, frame1_height = merge_frames(
-                mbi.deque_frame1, 3)
-            frame2_at, frame2_mz, frame2_height = merge_frames(
-                mbi.deque_frame2, 3)
-
-            # local maximum points
-            idx_max1_points = find_local_maximum(
-                frame1_at, frame1_mz, frame1_height,
-                tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
-                mz_min=args.pr_mz_min, at_min=args.at_min,
-                tol_point_num=args.tol_point_num,
-            )
-
-            # extrac
-            xics1, xims1 = None, None
-            if mode in ['xic', 'xix']:
-                xics1 = get_xics(
-                    frame1_at, frame1_mz, frame1_height,
-                    idx_max1_points, numba.typed.List(frame1_deque),
-                    tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
-                )
-            if mode in ['xim', 'xix']:
-                xims1 = get_xims(
-                    frame1_at, frame1_mz, frame1_height, idx_max1_points,
-                    tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
-                )
-
-            # MS1cluster：M, M+1H, M+2H
-            # [n_max, charge range, isotope num]
-            if mode == 'xic':
-                pcc_cluster1_m = find_isotope_cluster(
-                    frame1_at, frame1_mz, frame1_height,
-                    idx_max1_points, xics1,
-                    charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
-                    tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
-                )
-            elif mode == 'xim':
-                pcc_cluster1_m = find_isotope_cluster(
-                    frame1_at, frame1_mz, frame1_height,
-                    idx_max1_points, xims1,
-                    charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
-                    tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
-                )
-            elif mode == 'xix':
-                pcc_cluster1_m_xic = find_isotope_cluster(
-                    frame1_at, frame1_mz, frame1_height,
-                    idx_max1_points, xics1,
-                    charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
-                    tol_at_area=args.tol_at_area,
-                    tol_at_shift=args.tol_at_shift,
-                )
-                pcc_cluster1_m_xim = find_isotope_cluster(
-                    frame1_at, frame1_mz, frame1_height,
-                    idx_max1_points, xims1,
-                    charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
-                    tol_at_area=args.tol_at_area,
-                    tol_at_shift=args.tol_at_shift,
-                )
-                pcc_cluster1_m = (pcc_cluster1_m_xic + pcc_cluster1_m_xim) / 2
-
-            idx_tmp = np.any(
-                np.all(pcc_cluster1_m > args.tol_pcc, axis=2),
-                axis=1
-            )
-            idx_cluster1_points = idx_max1_points[idx_tmp]
-            pcc_cluster1_m = pcc_cluster1_m[idx_tmp]
-
-            xics1 = xics1[idx_tmp] if xics1 is not None else None
-            xims1 = xims1[idx_tmp] if xims1 is not None else None
-            if len(pcc_cluster1_m) == 0:
-                continue
-
-            # ms2
-            idx_max2_points = find_local_maximum(
-                frame2_at, frame2_mz, frame2_height,
-                tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
-                tol_point_num=args.tol_point_num,
-                mz_min=50, at_min=args.at_min,
-            )
-            if mode in ['xic', 'xix']:
-                xics2 = get_xics(
-                    frame2_at, frame2_mz, frame2_height,
-                    idx_max2_points, numba.typed.List(frame2_deque),
-                    tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
-                )
-            if mode in ['xim', 'xix']:
-                xims2 = get_xims(
-                    frame2_at, frame2_mz, frame2_height, idx_max2_points,
-                    tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
-                )
-
-            # match each ms2 to clusters: [n_ms2, n_cluster1]
-            if mode == 'xic':
-                pcc_ms2_m = find_frag_match(
-                    frame1_at, frame1_mz, frame1_height,
-                    frame2_at, frame2_mz, frame2_height,
-                    idx_cluster1_points, xics1, idx_max2_points, xics2,
-                    tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
-                    tol_ppm=args.tol_ppm
-                )
-            elif mode == 'xim':
-                pcc_ms2_m = find_frag_match(
-                    frame1_at, frame1_mz, frame1_height,
-                    frame2_at, frame2_mz, frame2_height,
-                    idx_cluster1_points, xims1, idx_max2_points, xims2,
-                    tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
-                    tol_ppm=args.tol_ppm
-                )
-            elif mode == 'xix':
-                pcc_ms2_m_xic = find_frag_match(
-                    frame1_at, frame1_mz, frame1_height,
-                    frame2_at, frame2_mz, frame2_height,
-                    idx_cluster1_points, xics1, idx_max2_points, xics2,
-                    tol_at_area=args.tol_at_area,
-                    tol_at_shift=args.tol_at_shift,
-                    tol_ppm=args.tol_ppm
-                )
-                pcc_ms2_m_xim = find_frag_match(
-                    frame1_at, frame1_mz, frame1_height,
-                    frame2_at, frame2_mz, frame2_height,
-                    idx_cluster1_points, xims1, idx_max2_points, xims2,
-                    tol_at_area=args.tol_at_area,
-                    tol_at_shift=args.tol_at_shift,
-                    tol_ppm=args.tol_ppm
-                )
-                pcc_ms2_m = (pcc_ms2_m_xic + pcc_ms2_m_xim) / 2
-
-            print_log(frame_i, len(frame_rts),
-                      frame1_at, idx_max1_points, idx_cluster1_points,
-                      frame2_at, idx_max2_points
-                      )
-
-            # mgf
-            frame_rt = frame_rts[frame_i]
-            for idx_col in np.arange(pcc_ms2_m.shape[1]):
-                pr_idx = idx_cluster1_points[idx_col]
-                pcc_v = pcc_ms2_m[:, idx_col]
-                # fg num
-                fg_num = (pcc_v > args.tol_pcc).sum()
-                if fg_num < args.tol_fg_num:
+            xics1_v, xics2_v = [], []
+            ats1_v, mzs1_v, ints1_v, cycle1_v = [], [], [], []
+            ats2_v, mzs2_v, ints2_v, cycle2_v = [], [], [], []
+            for frame_i in range(start, len(frame_rts) - start):
+                if frame_levels[frame_i] != 1:
                     continue
-                # charge
-                pcc_m = pcc_cluster1_m[idx_col]
-                pr_charges = np.arange(args.charge_min,
-                                       args.charge_max + 1)
-                idx_charges = np.all(pcc_m > args.tol_pcc, axis=-1)
-                pr_charges = pr_charges[idx_charges]
-                # pr
-                pr_at = frame1_at[pr_idx]
-                pr_mz = frame1_mz[pr_idx]
-                pr_height = frame1_height[pr_idx]
-                # fg
-                fg_idx = idx_max2_points[pcc_v > args.tol_pcc]
-                scan_mz = frame2_mz[fg_idx]
-                scan_height = frame2_height[fg_idx]
-                scan_pcc = pcc_v[pcc_v > args.tol_pcc]
-                assert len(scan_mz) == len(scan_pcc)
 
-                # write
-                for pr_charge in pr_charges:
-                    buffer_write("BEGIN IONS\n")
-                    buffer_write(f"TITLE={counter}.{pr_charge}\n")
-                    counter += 1
-                    buffer_write(f"RTINSECONDS={frame_rt:.2f}\n")
-                    buffer_write(f"AT={pr_at:.2f}\n")
-                    buffer_write(f"PEPMASS={pr_mz:.6f} {pr_height:.2f}\n")
-                    buffer_write(f"CHARGE={pr_charge}+\n")
-                    if scan_mz.size:
-                        mz_str = np.char.mod("%.6f", scan_mz)
-                        intensity_str = np.char.mod("%.2f", scan_height)
-                        pcc_str = np.char.mod("%.2f", scan_pcc)
-                        tmp = np.char.add(np.array(mz_str, dtype=str), ' ')
-                        tmp = np.char.add(
-                            tmp, np.array(intensity_str, dtype=str)
-                        )
-                        tmp = np.char.add(tmp, ' ')
-                        if args.write_pcc:
-                            tmp = np.char.add(
-                                tmp, np.array(pcc_str, dtype=str)
-                            )
-                        buffer_write("\n".join(tmp.tolist()))
-                        buffer_write("\n")
-                    buffer_write("END IONS\n\n")
-                    if buffer.tell() >= MGF_BUFFER_FLUSH:
-                        f.write(buffer.getvalue())
-                        buffer.seek(0)
-                        buffer.truncate(0)
-        remaining = buffer.getvalue()
-        if remaining:
-            f.write(remaining)
+                # load frames
+                ms.load_frames_to_deque(quad_idx, frame_i)
+                frame1_deque = ms.deque_frame1
+                frame2_deque = ms.deque_frame2
 
+                # merge frames for maximum points
+                frame1_at, frame1_mz, frame1_height = merge_frames(
+                    ms.deque_frame1, 3)
+                frame2_at, frame2_mz, frame2_height = merge_frames(
+                    ms.deque_frame2, 3)
+
+                # local point -- xic -- apex
+                for (ms_level, frame_at, frame_mz, frame_height, frame_deque) in (
+                    [1, frame1_at, frame1_mz, frame1_height, frame1_deque],
+                    [2, frame2_at, frame2_mz, frame2_height, frame2_deque],
+                ):
+                    idx_max_points = find_local_maximum(
+                        frame_at, frame_mz, frame_height,
+                        tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
+                        mz_min=args.pr_mz_min, at_min=args.at_min,
+                        tol_point_num=args.tol_point_num,
+                    )
+                    xics = get_xics(
+                        frame_at, frame_mz, frame_height,
+                        idx_max_points, numba.typed.List(frame_deque),
+                        tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
+                    )
+                    condition1 = (xics[:, 3] >= xics[:, 4]) & (xics[:, 3] >= xics[:, 2])
+                    argmax = xics.argmax(axis=-1)
+                    condition2 = (argmax >= 2) & (argmax <= 4)
+                    good_idx = condition1 & condition2
+                    idx_max_points = idx_max_points[good_idx]
+                    if ms_level == 1:
+                        xics1_v.append(xics[good_idx])
+                        ats1_v.append(frame_at[idx_max_points])
+                        mzs1_v.append(frame_mz[idx_max_points])
+                        ints1_v.append(frame_height[idx_max_points])
+                        cycle1_v.append([frame_i//2] * len(idx_max_points))
+                    else:
+                        xics2_v.append(xics[good_idx])
+                        ats2_v.append(frame_at[idx_max_points])
+                        mzs2_v.append(frame_mz[idx_max_points])
+                        ints2_v.append(frame_height[idx_max_points])
+                        cycle2_v.append([frame_i//2] * len(idx_max_points))
+            cycles1, ats1, mzs1, ints1, xics1 = get_points(
+                xics1_v, ats1_v, mzs1_v, ints1_v, cycle1_v
+            )
+            cycles2, ats2, mzs2, ints2, xics2 = get_points(
+                xics2_v, ats2_v, mzs2_v, ints2_v, cycle2_v
+            )
+
+            # 同位汇聚 for ms1
+            labels = assign_mono_labels(
+                mzs1, ats1, cycles1, ints1, args.tol_ppm, 2, 3
+            )
+            print({int(k): int(v) for k, v in zip(*np.unique(labels, return_counts=True))})
+            continue
+    #         idx = labels >= 1
+    #         mzs1, ats1, cycles1, ints1, xics1 = (
+    #             mzs1[idx], ats1[idx], cycles1[idx], ints1[idx], xics1[idx]
+    #         )
+    #         charges1 = labels[idx]
+    #
+    #         if len(mzs1) == 0:
+    #             continue
+    #
+    #         # match
+    #         n_prec = len(mzs1)
+    #         n_frag = len(mzs2)
+    #         count = 0
+    #         for i in range(n_prec):
+    #             prec_mz = mzs1[i]
+    #             prec_at = ats1[i]
+    #             prec_cycle = cycles1[i]
+    #             prec_int = ints1[i]
+    #             prec_charge = charges1[i]
+    #             prec_xic = xics1[i]
+    #
+    #             if np.std(prec_xic) < 1e-10:
+    #                 continue
+    #
+    #             cycle_mask = np.abs(cycles2 - prec_cycle) <= 3  # Cycle 容忍度
+    #             at_mask = np.abs(ats2 - prec_at) <= args.tol_at_shift
+    #             candidate_mask = cycle_mask & at_mask
+    #             candidate_idx = np.where(candidate_mask)[0]
+    #
+    #             if len(candidate_idx) < args.tol_fg_num:
+    #                 continue
+    #
+    #             pcc_values = np.zeros(len(candidate_idx))
+    #             for j, idx in enumerate(candidate_idx):
+    #                 frag_xic = xics2[idx]
+    #                 if np.std(frag_xic) < 1e-10:
+    #                     pcc_values[j] = 0
+    #                 else:
+    #                     pcc_values[j] = np.corrcoef(prec_xic, frag_xic)[0, 1]
+    #
+    #             good_mask = pcc_values >= args.tol_pcc
+    #             good_local_idx = candidate_idx[good_mask]
+    #             good_pcc = pcc_values[good_mask]
+    #
+    #             if len(good_local_idx) < args.tol_fg_num:
+    #                 continue
+    #
+    #             prec_rt = frame_rts[int(prec_cycle)]
+    #
+    #             buffer_write("BEGIN IONS\n")
+    #             buffer_write(f"TITLE={pseudo_count}.{prec_charge}\n")
+    #             buffer_write(f"RTINSECONDS={prec_rt:.2f}\n")
+    #             buffer_write(f"PEPMASS={prec_mz:.6f} {prec_int:.2f}\n")
+    #             buffer_write(f"CHARGE={prec_charge}+\n")
+    #             buffer_write(f"AT={prec_at:.4f}\n")
+    #
+    #             # 写入片段离子
+    #             for frag_idx, pcc in zip(good_local_idx, good_pcc):
+    #                 mz = mzs2[frag_idx]
+    #                 intensity = ints2[frag_idx]
+    #                 if args.write_pcc:
+    #                     buffer_write(f"{mz:.6f} {intensity:.2f} {pcc:.2f}\n")
+    #                 else:
+    #                     buffer_write(f"{mz:.6f} {intensity:.2f}\n")
+    #
+    #             buffer_write("END IONS\n\n")
+    #             count += 1
+    #             pseudo_count += 1
+    #             # 缓冲区刷新
+    #             if buffer.tell() >= MGF_BUFFER_FLUSH:
+    #                 f.write(buffer.getvalue())
+    #                 buffer.seek(0)
+    #                 buffer.truncate(0)
+    #
+    #         logger.info(
+    #             f"Quad {quad_idx}: {n_prec} precursors → {count} pseudo-spectra")
+    #
+    #         # 写入剩余缓冲区
+    #     remaining = buffer.getvalue()
+    #     if remaining:
+    #         f.write(remaining)
+    #
+    # logger.info(f"Total pseudo-spectra written: {pseudo_count}")

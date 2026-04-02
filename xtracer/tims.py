@@ -1,4 +1,5 @@
 from pathlib import Path
+from collections import deque
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,11 @@ from xtracer.alphatims import bruker
 from xtracer.log import Logger
 
 logger = Logger.get_logger()
+
+try:
+    profile
+except:
+    profile = lambda x: x
 
 
 @jit(nopython=True, nogil=True)
@@ -181,7 +187,7 @@ class Tims:
     """
 
     @profile
-    def __init__(self, dir_d: Path) -> None:
+    def __init__(self, dir_d: Path, across_cycle_num: int) -> None:
         # logger.info('Loading .d data...')
         self.dir_d = dir_d
 
@@ -199,6 +205,12 @@ class Tims:
 
         self.d_ms1_maps = d_ms1_maps
         self.d_ms2_maps = d_ms2_maps
+
+        self.deque_frame1 = deque(maxlen=across_cycle_num)
+        self.deque_frame2 = deque(maxlen=across_cycle_num)
+
+        self.cycle_frame_num = 2
+        self.frame_expand_num = int(across_cycle_num / 2)
 
     @property
     def frame_nums(self):
@@ -236,12 +248,12 @@ class Tims:
             df_max = (
                 df.groupby(["quad_low_mz_values", "quad_high_mz_values"], sort=False)
                 .apply(np.maximum.reduce)
-                .reset_index(drop=True)
+                .reset_index()
             )
             df_min = (
                 df.groupby(["quad_low_mz_values", "quad_high_mz_values"], sort=False)
                 .apply(np.minimum.reduce)
-                .reset_index(drop=True)
+                .reset_index()
             )
             df = df_max.merge(
                 df_min,
@@ -283,8 +295,8 @@ class Tims:
         x = self.df_settings[["quad_low_mz_values", "quad_high_mz_values"]]
         x = x.drop_duplicates()
         x = x.sort_values(by="quad_low_mz_values")
-        low = x["quad_low_mz_values"].values
-        high = x["quad_high_mz_values"].values
+        low = x["quad_low_mz_values"].values.copy()
+        high = x["quad_high_mz_values"].values.copy()
         # assert (low[1:] == high[0:-1]).all(), 'dia swath exists ' \
         #                                       'overlap between ' \
         #                                       'windows!'
@@ -319,18 +331,6 @@ class Tims:
 
             all_height : np.ndarray
                 The intensities of profile ions.
-
-            cycle_valid_lens2 : np.ndarray
-                The number of centroided ions per cycle.
-
-            all_push2 : np.ndarray
-                The 1/k0 values of centroided ions.
-
-            all_tof2 : np.ndarray
-                The m/z values of centroided ions.
-
-            all_height2 : np.ndarray
-                The intensities of centroided ions.
         """
         all_rt = self.bruker.rt_values
         ms1_idx_v = np.where(self.bruker.frames.MsMsType == 0)[0]
@@ -394,36 +394,12 @@ class Tims:
         result = numba_paral_sort(all_tof, all_push, all_height, cycle_len_cumsum)
         all_tof, all_push, all_height = result
 
-        # centroid
-        tol_push = self.get_centroid_tol_push()
-        tol_tof_summed, tol_tof_suppression = 2, 1
-        summed2, all_height2 = numba_paral_centroid(
-            all_tof,
-            all_push,
-            all_height,
-            tol_tof_summed,
-            tol_tof_suppression,
-            tol_push,
-            cycle_len_cumsum,
-        )
-
-        tmp = np.split(all_height2, cycle_len_cumsum[:-1])
-        cycle_valid_lens2 = np.array(list(map(np.count_nonzero, tmp)))
-
-        select_id = all_height2 > 0
-        all_push2, all_tof2, all_height2 = numba_index_by_bool(
-            select_id, all_push, all_tof, all_height2
-        )
-        assert len(all_tof2) == sum(cycle_valid_lens2)
-
         # push -- im，tof -- m/z
         push_to_im = self.bruker.mobility_values.astype(np.float32)
         all_push = push_to_im[all_push]
-        all_push2 = push_to_im[all_push2]
 
         tof_to_mz = self.bruker.mz_values.astype(np.float32)
         all_tof = tof_to_mz[all_tof]
-        all_tof2 = tof_to_mz[all_tof2]
 
         return (
             all_rt,
@@ -431,10 +407,6 @@ class Tims:
             all_push,
             all_tof,
             all_height,
-            cycle_valid_lens2,
-            all_push2,
-            all_tof2,
-            all_height2,
         )
 
     def get_rt_range(self) -> tuple[float, float]:
@@ -544,15 +516,10 @@ class Tims:
             all_push,
             all_tof,
             all_height,
-            cycle_valid_lens2,
-            all_push2,
-            all_tof2,
-            all_height2,
         ) = ms1_map
 
         # profile and centroid
         scans_seek_idx = np.concatenate([[0], np.cumsum(cycle_valid_lens)])
-        scans_seek_idx2 = np.concatenate([[0], np.cumsum(cycle_valid_lens2)])
 
         swath = self.get_dia_quadrupole()
         d_ms1_maps = {}
@@ -585,36 +552,10 @@ class Tims:
                 locals_height.append(local_height)
                 locals_len.append(len(local_mz))
 
-                # centroid
-                scan_seek_start2 = scans_seek_idx2[j]
-                scan_seek_end2 = scans_seek_idx2[j + 1]
-                scan_mz2 = all_tof2[scan_seek_start2:scan_seek_end2]
-                scan_height2 = all_height2[scan_seek_start2:scan_seek_end2]
-                scan_im2 = all_push2[scan_seek_start2:scan_seek_end2]
-                good_idx = (scan_mz2 >= pr_mz_low) & (scan_mz2 <= pr_mz_high)
-                good_num = good_idx.sum()
-                if good_num:
-                    local_im2, local_mz2, local_height2 = numba_index_by_bool(
-                        good_idx, scan_im2, scan_mz2, scan_height2
-                    )
-                else:
-                    local_mz2 = np.array([10.0], dtype=np.float32)
-                    local_height2 = np.array([1], dtype=np.uint32)
-                    local_im2 = np.array([1.0], dtype=np.float32)
-                locals_mz2.append(local_mz2)
-                locals_im2.append(local_im2)
-                locals_height2.append(local_height2)
-                locals_len2.append(len(local_mz2))
-
             locals_mz = np.concatenate(locals_mz)
             locals_im = np.concatenate(locals_im)
             locals_height = np.concatenate(locals_height)
             locals_len = np.array(locals_len)
-
-            locals_mz2 = np.concatenate(locals_mz2)
-            locals_im2 = np.concatenate(locals_im2)
-            locals_height2 = np.concatenate(locals_height2)
-            locals_len2 = np.array(locals_len2)
 
             d_ms1_maps[map_id] = (
                 all_rt,
@@ -622,10 +563,6 @@ class Tims:
                 locals_im,
                 locals_mz,
                 locals_height,
-                locals_len2,
-                locals_im2,
-                locals_mz2,
-                locals_height2,
             )
         return d_ms1_maps
 
@@ -654,21 +591,51 @@ class Tims:
         tol_push = 10 * self.bruker.scan_max_index / 900 / im_range
         return int(tol_push)
 
-    def get_device_name(self) -> str:
-        """
-        Get the device name like timsTOF Ultra.
-        """
-        _, df1, _, df_NCE, _ = alphatims.bruker.read_bruker_sql(str(self.dir_d))
-        d = df1.set_index("Key")["Value"].to_dict()
-        return d["InstrumentName"]
+    def get_quad_num(self):
+        return len(self.get_dia_quadrupole()) - 1
 
+    def get_frame_times(self, quad_idx):
+        return np.repeat(self.d_ms1_maps[quad_idx][0], 2)
 
-def load_ms(ws: Path) -> Tims:
-    """
-    Wrapper function for loading diaPASEF data.
-    """
-    ms = Tims(ws)
-    device = ms.get_device_name()
-    gradient = ms.get_scan_rts()[-1] / 60.0
-    logger.info("device_name: {}, gradient: {:.2f}min".format(device, gradient))
-    return ms
+    def get_frame_levels(self, quad_idx):
+        n_cycle = len(self.d_ms1_maps[quad_idx][0])
+        return [1, 2] * n_cycle
+
+    def _get_frame_data(self, idx_quad, idx_frame):
+        if idx_frame % 2 == 0:
+            ms_map = self.d_ms1_maps[idx_quad]
+        else:
+            ms_map = self.d_ms2_maps[idx_quad]
+        (
+            all_rt,
+            cycle_valid_lens,
+            all_push,
+            all_tof,
+            all_height,
+        ) = ms_map
+        frame_indptr = np.empty(len(cycle_valid_lens) + 1, dtype=np.int64)
+        frame_indptr[0] = 0
+        frame_indptr[1:] = np.cumsum(cycle_valid_lens)
+        ii = int(idx_frame / 2)
+        start, end = frame_indptr[ii], frame_indptr[ii + 1]
+        ims = all_push[start:end]
+        mzs = all_tof[start:end]
+        ints = all_height[start:end]
+
+        ims = (ims - 0.5) / 0.0032
+        return ims, mzs, ints
+
+    def load_frames_to_deque(self, idx_quad, idx_frame):
+        if len(self.deque_frame1) == 0:  # loop start
+            for i in range(-self.frame_expand_num,
+                           self.frame_expand_num + 1):
+                ii = idx_frame + i * self.cycle_frame_num
+                self.deque_frame1.append(self._get_frame_data(idx_quad, ii))
+                self.deque_frame2.append(self._get_frame_data(idx_quad, ii+1))
+        else:
+            ii = idx_frame + self.frame_expand_num * self.cycle_frame_num
+            self.deque_frame1.append(self._get_frame_data(idx_quad, ii))
+            self.deque_frame2.append(self._get_frame_data(idx_quad, ii+1))
+
+if __name__ == "__main__":
+    ms = Tims(r"D:\Jesse\xtracer\data_d\20200505_Evosep_100SPD_SG06-16_MLHeLa_100ng_py8_S2-C5_1_2735.d", 3)

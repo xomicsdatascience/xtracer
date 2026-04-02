@@ -1,6 +1,7 @@
 import numpy as np
 from numba import jit, prange
 from xtracer.log import Logger
+import math
 
 logger = Logger.get_logger()
 
@@ -49,6 +50,26 @@ def cal_pcc(vec1, vec2):
     if denom1 < 1e-12 or denom2 < 1e-12:
         return 0.0
     return num / np.sqrt(denom1 * denom2)
+
+
+@jit(nopython=True, nogil=True, parallel=True)
+def cal_bell_sas(xics):
+    sas = np.zeros(len(xics))
+    for i in prange(len(xics)):
+        v = xics[i]
+        norm_x = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2 + v[3] ** 2 +
+                           v[4] ** 2 + v[5] ** 2 + v[6] ** 2) + 1e-6
+
+        # y = np.array([0.0044, 0.054, 0.242, 0.399, 0.242, 0.054, 0.0044])
+        norm_y = 0.531225
+        s = v[0] * 0.0044 + v[1] * 0.054 + v[2] * 0.242 + v[3] * 0.399 + v[
+            4] * 0.242 + v[5] * 0.054 + v[6] * 0.0044
+
+        sa = s / (norm_x * norm_y)
+        sa = min(sa, 1.)
+        sa = 1 - 2 * math.acos(sa) / math.pi
+        sas[i] = sa
+    return sas
 
 
 @jit(nopython=True)
@@ -380,26 +401,122 @@ def compute_log_points(n_total, n_print=10):
 
 
 def print_log(
-        frame_i, n_total,
-        frame1_at, idx_max1_points, idx_cluster1_points,
-        frame2_at, idx_max2_points
+        frame_i, n_frame,
+        n_raw, n0, n1, n11
 ):
-    log_points = compute_log_points(n_total, n_print=10)
+    log_points = compute_log_points(n_frame, n_print=10)
     if frame_i in log_points:
-        info = (f'{frame_i}/{n_total}, '
-                f'{len(frame1_at)}, '
-                f'{len(idx_max1_points)}, '
-                f'{len(idx_cluster1_points)}, '
-                f'{len(frame2_at)}, '
-                f'{len(idx_max2_points)}'
-        )
+        info = (f'{frame_i}/{n_frame}, {n_raw}, {n0}, {n1}, {n11}')
         logger.info(info)
     if frame_i+1 in log_points:
-        info = (f'{frame_i}/{n_total}, '
-                f'{len(frame1_at)}, '
-                f'{len(idx_max1_points)}, '
-                f'{len(idx_cluster1_points)}, '
-                f'{len(frame2_at)}, '
-                f'{len(idx_max2_points)}'
-        )
+        info = (f'{frame_i}/{n_frame}, {n_raw}, {n0}, {n1}, {n11}')
         logger.info(info)
+
+
+from numba import jit
+import numpy as np
+
+@jit(nopython=True, nogil=True)
+def dedup_local_max(
+        mzs, ats, ints, cycles, tol_ppm, tol_at, tol_cycle
+):
+
+    n = len(mzs)
+    keep = np.ones(n, dtype=np.uint8)
+    right = 0
+
+    for i in range(n):
+        if keep[i] == 0:
+            continue
+
+        mz_i = mzs[i]
+        at_i = ats[i]
+        cycle_i = cycles[i]
+        int_i = ints[i]
+
+        mz_max = mz_i * (1 + tol_ppm * 1e-6)
+
+        if right < i + 1:
+            right = i + 1
+
+        while right < n and mzs[right] <= mz_max:
+            right += 1
+
+        for j in range(i + 1, right):
+            if keep[j] == 0:
+                continue
+
+            # 更快的 early reject
+            if abs(cycles[j] - cycle_i) > tol_cycle:
+                continue
+            if abs(ats[j] - at_i) >= tol_at:
+                continue
+
+            int_j = ints[j]
+
+            if int_j > int_i:
+                keep[i] = 0
+                break
+            else:
+                keep[j] = 0
+    return keep
+
+
+import numpy as np
+from numba import njit
+
+
+@jit(nogil=True, nopython=True, parallel=True)
+def assign_mono_labels(
+        mzs, ats, cycles, ints, tol_ppm, tol_at, tol_cycle
+):
+    """
+    高性能 MS1 mono/isotope 标记 (最终版本)
+
+    labels 含义：
+        1-4 : Mono 电荷
+        -1  : 同位素峰 (M+1 或被左峰排除的 M+1)
+        0   : 未找到 Mono / 孤立峰
+
+    - 左峰 M-1 存在且强度足够 → 当前峰 i 标记为 -1
+    - 右峰 M+1 贪婪匹配 → i 标记为 Mono (1-4)，右峰标 -1
+    - 滑动窗口优化，O(N) 时间复杂度
+    """
+    n = mzs.shape[0]
+    labels = np.zeros(n, dtype=np.int8)
+    inv_mass = 1.00335
+
+    for i in prange(n):
+        mz_i = mzs[i]
+        at_i = ats[i]
+        cycle_i = cycles[i]
+        int_i = ints[i]
+
+        # -------------------------------
+        # Step 2: 右峰 M+1 贪婪匹配
+        # -------------------------------
+        best_z = 0
+        best_j_int = -1.0
+
+        mz_max = mz_i + inv_mass * 1.1
+        for j in range(i + 1, n):
+            mz_j = mzs[j]
+            int_j = ints[j]
+
+            if mz_j > mz_max:
+                break
+
+            if abs(ats[j] - at_i) > tol_at or abs(cycles[j] - cycle_i) > tol_cycle:
+                continue
+
+            for z in range(3, 5):
+                delta_mz = inv_mass / z
+                bias_ppm = abs((mz_j - mz_i) - delta_mz) / delta_mz * 1e6
+                if bias_ppm <= tol_ppm:
+                    if int_j <= int_i:
+                        if int_j > best_j_int:
+                            best_j_int = int_j
+                            best_z = z
+        labels[i] = best_z
+
+    return labels
