@@ -35,7 +35,7 @@ def parse_args():
         help='Specify the minimum m/z value of precursors. Default: 200'
     )
     parser.add_argument(
-        '-charge_min', type=int, default=1,
+        '-charge_min', type=int, default=2,
         help='Specify the minimum charge of precursors. Default: 1'
     )
     parser.add_argument(
@@ -43,32 +43,28 @@ def parse_args():
         help='Specify the maximum charge of precursors. Default: 4'
     )
     parser.add_argument(
-        '-at_min', type=float, default=0.1,
-        help='Specify the minimum at value of signals. Default: 90'
-    )
-    parser.add_argument(
-        '-tol_at_area', type=float, default=2.0,
+        '-tol_im_area', type=float, default=0.02,
         help='Specify the millisecond tolerance of signal in at dimension. '
-             'Default: 2.0'
+             'Default: 0.02'
     )
     parser.add_argument(
-        '-tol_at_shift', type=float, default=1,
+        '-tol_im_shift', type=float, default=0.01,
         help='Specify the millisecond tolerance when considering signal '
-             'related. Default: 1'
+             'related. Default: 0.01'
     )
     parser.add_argument(
-        '-tol_ppm', type=float, default=30,
+        '-tol_ppm', type=float, default=20,
         help='Specify the ppm tolerance of signal in m/z dimension. '
-             'Default: 30'
+             'Default: 20'
     )
     parser.add_argument(
-        '-tol_iso_num', type=int, default=2,
+        '-tol_iso_num', type=int, default=1,
         help='Specify how many isotopes should have to be a precursor. '
-             'Default: 2, i.e. M, M+1H, M+2H'
+             'Default: 1, i.e. M and M+1'
     )
     parser.add_argument(
-        '-tol_pcc', type=float, default=0.4,
-        help='Specify the PCC tolerance when two signal are related. Default: 0.4'
+        '-tol_pcc', type=float, default=0.3,
+        help='Specify the PCC tolerance when two signal are related. Default: 0.3'
     )
     parser.add_argument(
         '-tol_point_num', type=int, default=5,
@@ -79,12 +75,6 @@ def parse_args():
         '-tol_fg_num', type=int, default=10,
         help='Specify the fragment ions num tolerance that a spectrum should '
              'have. Default: 10'
-    )
-
-    # for xim
-    parser.add_argument(
-        '-frame_merge_num', type=int, default=3,
-        help='Specify the odd XIM cycle span when summing frames. Default: 3'
     )
 
     # for xic

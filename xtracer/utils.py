@@ -293,45 +293,126 @@ def get_xics(frame_at, frame_mz, frame_height,
     return xics
 
 
-@jit(nopython=True, parallel=True)
+@jit(nopython=True, nogil=True, parallel=True)
 def find_isotope_cluster(
         frame1_at, frame1_mz, frame1_height,
-        idx_max_points, xixs1,
+        idx_max_points, is_apex_v, xixs1,
         charge_min, charge_max, tol_iso_num,
-        tol_at_area, tol_at_shift, tol_ppm
+        tol_at_area, tol_at_shift, tol_ppm, tol_pcc
 ):
-    results = np.zeros((len(idx_max_points),
-                        (charge_max - charge_min + 1),
-                        tol_iso_num))
+    '''
+    state_left_m是二维，因为只用看一个
+    state_right_m是三维，因为可能需要同时考虑多个isotope
+    state_gaussian_m：当左右都不存在，还要考察自身
+    state is True when 1. 符合强度规律 2. 符合pcc阈值
+    '''
+    xix_gaussian = np.array(
+        [0.0044, 0.054, 0.242, 0.399, 0.242, 0.054, 0.0044], dtype=np.float32
+    )
 
-    for idx_i in prange(len(idx_max_points)):
+    n_point = np.sum(is_apex_v)
+    n_charge = charge_max - charge_min + 1
+    apex_prefix = np.cumsum(is_apex_v) - 1
+
+    state_left_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+    state_right_m = np.zeros((n_point, n_charge, tol_iso_num), dtype=np.bool_)
+    state_lone_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+
+    for idx_i in prange(len(is_apex_v)): # 125
+        if not is_apex_v[idx_i]:
+            continue
+        idx_apex = apex_prefix[idx_i]
+        # if idx_apex == 15:
+        #     a = 1
+
         i = idx_max_points[idx_i]
         i_at = frame1_at[i]
         i_mz = frame1_mz[i]
-        limit_mz = (i_mz + tol_iso_num * C13_DELTA) * (1 + 100 * 1e-6)
-        vec1 = xixs1[idx_i]
-        for idx_ii in range(idx_i + 1, len(idx_max_points)): # local maximum
-            ii = idx_max_points[idx_ii]
-            ii_at = frame1_at[ii]
-            bias_at = abs(ii_at - i_at)
-            if bias_at > tol_at_shift:
+        i_xix = xixs1[idx_i]
+        i_int = np.mean(i_xix[2:5])
+
+        for charge in range(charge_min, charge_max + 1):
+            # 先看M-1:
+            target_mz = i_mz - C13_DELTA / charge
+            limit_mz = target_mz * (1 - 50 * 1e-6)
+            for idx_ii in range(idx_i - 1, -1, -1):
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xix = xixs1[idx_ii]
+                ii_int = np.mean(ii_xix[2:5])
+                if ii_mz < limit_mz:
+                    break
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_int < i_int * 1:
+                    continue
+                bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
+                if bias_ppm > tol_ppm:
+                    continue
+                pcc = cal_pcc(i_xix, ii_xix)
+                if pcc > tol_pcc:
+                    state_left_m[idx_apex, charge-charge_min] = True
+                    break
+
+            # 如果有M-1, 不需要再看M+1
+            if state_left_m[idx_apex, charge-charge_min]:
                 continue
-            ii_mz = frame1_mz[ii]
-            if ii_mz > limit_mz:
-                break
-            for n_charge in range(charge_min, charge_max+1):
+
+            # 再看M+1:
+            found_right = False
+            limit_mz = (i_mz + tol_iso_num * C13_DELTA / charge) * (1 + 50 * 1e-6)
+            for idx_ii in range(idx_i + 1, len(idx_max_points)): # local maximum
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xix = xixs1[idx_ii]
+                ii_int = np.mean(ii_xix[2:5])
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_mz > limit_mz:
+                    break
+                if (ii_int > i_int) or (ii_int < 0.2 * i_int):
+                    continue
                 for n_neutron in range(1, tol_iso_num+1):
-                    target_mz = i_mz + n_neutron * C13_DELTA / n_charge
+                    target_mz = i_mz + n_neutron * C13_DELTA / charge
                     bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
                     if bias_ppm > tol_ppm:
                         continue
-                    vec2 = xixs1[idx_ii]
-                    pcc = cal_pcc(vec1, vec2)
-                    # maximum pcc in case multiple points
-                    cur = results[idx_i, n_charge-charge_min, n_neutron-1]
-                    pcc = max(pcc, cur)
-                    results[idx_i, n_charge-charge_min, n_neutron-1] = pcc
-    return results
+                    pcc = cal_pcc(i_xix, ii_xix)
+                    if pcc > tol_pcc:
+                        state_right_m[idx_apex, charge-charge_min, n_neutron-1] = True
+                        found_right = True
+                        break
+
+            # 无M-1, 无M+N
+            if not found_right:
+                pcc = cal_pcc(i_xix, xix_gaussian)
+                if pcc > tol_pcc:
+                    state_lone_m[idx_apex, charge-charge_min] = True
+
+    return state_left_m, state_right_m, state_lone_m
+
+
+def get_states(state_left_m, state_right_m, state_lone_m, allow_lone):
+    '''
+    单电荷规则: 左无右有，则该电荷有；其他则该电荷无
+    跨电荷规则：左无右无，gaussian有，则全电荷有
+    '''
+    # Step 1: 单电荷规则
+    final_m = (~state_left_m) & state_right_m
+
+    # Step 2: 跨电荷规则
+    # 选出那些单电荷规则后全 False 的行
+    mask_all_false = ~final_m.any(axis=1)
+
+    # 如果该行的 lone 全 True，则将整个行置 True
+    mask_lone = mask_all_false & state_lone_m.all(axis=1)
+
+    if allow_lone:
+        final_m[mask_lone, 0] = True
+
+    return final_m
 
 
 @jit(nopython=True, parallel=True)
@@ -399,17 +480,29 @@ def compute_log_points(n_total, n_print=10):
     log_points = [candidates[int(round(i * step))] for i in range(n_print)]
     return np.array(log_points)
 
-
 def print_log(
-        frame_i, n_frame,
-        n_raw, n0, n1, n11
+        frame_i, n_total,
+        frame1_at, idx_max1_points, idx_cluster1_points,
+        frame2_at, idx_max2_points
 ):
-    log_points = compute_log_points(n_frame, n_print=10)
+    log_points = compute_log_points(n_total, n_print=10)
     if frame_i in log_points:
-        info = (f'{frame_i}/{n_frame}, {n_raw}, {n0}, {n1}, {n11}')
+        info = (f'{frame_i}/{n_total}, '
+                f'{len(frame1_at)}, '
+                f'{len(idx_max1_points)}, '
+                f'{len(idx_cluster1_points)}, '
+                f'{len(frame2_at)}, '
+                f'{len(idx_max2_points)}'
+        )
         logger.info(info)
     if frame_i+1 in log_points:
-        info = (f'{frame_i}/{n_frame}, {n_raw}, {n0}, {n1}, {n11}')
+        info = (f'{frame_i}/{n_total}, '
+                f'{len(frame1_at)}, '
+                f'{len(idx_max1_points)}, '
+                f'{len(idx_cluster1_points)}, '
+                f'{len(frame2_at)}, '
+                f'{len(idx_max2_points)}'
+        )
         logger.info(info)
 
 
@@ -468,25 +561,14 @@ from numba import njit
 
 @jit(nogil=True, nopython=True, parallel=True)
 def assign_mono_labels(
-        mzs, ats, cycles, ints, tol_ppm, tol_at, tol_cycle
+        mzs, ats, cycles, ints, tol_ppm, tol_im, tol_cycle
 ):
-    """
-    高性能 MS1 mono/isotope 标记 (最终版本)
-
-    labels 含义：
-        1-4 : Mono 电荷
-        -1  : 同位素峰 (M+1 或被左峰排除的 M+1)
-        0   : 未找到 Mono / 孤立峰
-
-    - 左峰 M-1 存在且强度足够 → 当前峰 i 标记为 -1
-    - 右峰 M+1 贪婪匹配 → i 标记为 Mono (1-4)，右峰标 -1
-    - 滑动窗口优化，O(N) 时间复杂度
-    """
     n = mzs.shape[0]
     labels = np.zeros(n, dtype=np.int8)
     inv_mass = 1.00335
 
     for i in prange(n):
+        # i = 10310
         mz_i = mzs[i]
         at_i = ats[i]
         cycle_i = cycles[i]
@@ -500,23 +582,26 @@ def assign_mono_labels(
 
         mz_max = mz_i + inv_mass * 1.1
         for j in range(i + 1, n):
+            # j = 10736
             mz_j = mzs[j]
             int_j = ints[j]
 
             if mz_j > mz_max:
                 break
 
-            if abs(ats[j] - at_i) > tol_at or abs(cycles[j] - cycle_i) > tol_cycle:
+            if abs(ats[j] - at_i) > tol_im or abs(cycles[j] - cycle_i) > tol_cycle:
                 continue
 
-            for z in range(3, 5):
+            for z in range(1, 5):
                 delta_mz = inv_mass / z
-                bias_ppm = abs((mz_j - mz_i) - delta_mz) / delta_mz * 1e6
+                bias_ppm = abs((mz_j - mz_i) - delta_mz) / mz_i * 1e6
                 if bias_ppm <= tol_ppm:
-                    if int_j <= int_i:
-                        if int_j > best_j_int:
-                            best_j_int = int_j
-                            best_z = z
+                    best_z = z
+                    break
+                    # if int_j <= int_i:
+                    #     if int_j > best_j_int:
+                    #         best_j_int = int_j
+                    #         best_z = z
         labels[i] = best_z
 
     return labels

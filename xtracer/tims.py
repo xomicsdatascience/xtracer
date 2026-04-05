@@ -209,9 +209,6 @@ class Tims:
         self.deque_frame1 = deque(maxlen=across_cycle_num)
         self.deque_frame2 = deque(maxlen=across_cycle_num)
 
-        self.cycle_frame_num = 2
-        self.frame_expand_num = int(across_cycle_num / 2)
-
     @property
     def frame_nums(self):
         return len(self.bruker.frames)
@@ -595,14 +592,10 @@ class Tims:
         return len(self.get_dia_quadrupole()) - 1
 
     def get_frame_times(self, quad_idx):
-        return np.repeat(self.d_ms1_maps[quad_idx][0], 2)
+        return self.d_ms1_maps[quad_idx][0]
 
-    def get_frame_levels(self, quad_idx):
-        n_cycle = len(self.d_ms1_maps[quad_idx][0])
-        return [1, 2] * n_cycle
-
-    def _get_frame_data(self, idx_quad, idx_frame):
-        if idx_frame % 2 == 0:
+    def _get_cycle_data(self, idx_quad, idx_cycle, level):
+        if level == 1:
             ms_map = self.d_ms1_maps[idx_quad]
         else:
             ms_map = self.d_ms2_maps[idx_quad]
@@ -616,26 +609,23 @@ class Tims:
         frame_indptr = np.empty(len(cycle_valid_lens) + 1, dtype=np.int64)
         frame_indptr[0] = 0
         frame_indptr[1:] = np.cumsum(cycle_valid_lens)
-        ii = int(idx_frame / 2)
-        start, end = frame_indptr[ii], frame_indptr[ii + 1]
+        start, end = frame_indptr[idx_cycle], frame_indptr[idx_cycle + 1]
         ims = all_push[start:end]
         mzs = all_tof[start:end]
         ints = all_height[start:end]
 
-        ims = (ims - 0.5) / 0.0032
         return ims, mzs, ints
 
-    def load_frames_to_deque(self, idx_quad, idx_frame):
+    def load_cycles_to_deque(self, idx_quad, idx_cycle):
         if len(self.deque_frame1) == 0:  # loop start
-            for i in range(-self.frame_expand_num,
-                           self.frame_expand_num + 1):
-                ii = idx_frame + i * self.cycle_frame_num
-                self.deque_frame1.append(self._get_frame_data(idx_quad, ii))
-                self.deque_frame2.append(self._get_frame_data(idx_quad, ii+1))
+            for i in range(-3, 3 + 1):
+                ii = idx_cycle + i
+                self.deque_frame1.append(self._get_cycle_data(idx_quad, ii, 1))
+                self.deque_frame2.append(self._get_cycle_data(idx_quad, ii, 2))
         else:
-            ii = idx_frame + self.frame_expand_num * self.cycle_frame_num
-            self.deque_frame1.append(self._get_frame_data(idx_quad, ii))
-            self.deque_frame2.append(self._get_frame_data(idx_quad, ii+1))
+            ii = idx_cycle + 3
+            self.deque_frame1.append(self._get_cycle_data(idx_quad, ii, 1))
+            self.deque_frame2.append(self._get_cycle_data(idx_quad, ii, 2))
 
 if __name__ == "__main__":
     ms = Tims(r"D:\Jesse\xtracer\data_d\20200505_Evosep_100SPD_SG06-16_MLHeLa_100ng_py8_S2-C5_1_2735.d", 3)
