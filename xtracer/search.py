@@ -52,7 +52,7 @@ def main(args, indir, outdir, mode):
             ats2_v, mzs2_v, ints2_v, cycle2_v = [], [], [], []
             state_m_v = []
             for cycle_i in range(3, len(cycle_rts) - 3):
-                # cycle_i = 380
+                # cycle_i = 203
 
                 # load frames
                 ms.load_cycles_to_deque(quad_idx, cycle_i)
@@ -110,7 +110,7 @@ def main(args, indir, outdir, mode):
                 idx_max2 = find_local_maximum(
                     frame2_at, frame2_mz, frame2_height,
                     tol_at_area=args.tol_im_area, tol_ppm=args.tol_ppm,
-                    tol_point_num=5, #args.tol_point_num,
+                    tol_point_num=3, #args.tol_point_num,
                     mz_min=50, at_min=0.1,
                 )
                 xics2 = get_xics(

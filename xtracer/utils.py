@@ -388,7 +388,7 @@ def find_isotope_cluster(
             # 无M-1, 无M+N
             if not found_right:
                 pcc = cal_pcc(i_xix, xix_gaussian)
-                if pcc > tol_pcc:
+                if pcc > 0.75:
                     state_lone_m[idx_apex, charge-charge_min] = True
 
     return state_left_m, state_right_m, state_lone_m
