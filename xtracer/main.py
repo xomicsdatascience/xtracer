@@ -33,7 +33,7 @@ def parse_args():
         help='Specify the minimum m/z value of precursors. Default: 200'
     )
     parser.add_argument(
-        '-charge_min', type=int, default=1,
+        '-charge_min', type=int, default=2,
         help='Specify the minimum charge of precursors. Default: 1'
     )
     parser.add_argument(
@@ -41,8 +41,8 @@ def parse_args():
         help='Specify the maximum charge of precursors. Default: 4'
     )
     parser.add_argument(
-        '-at_min', type=float, default=90,
-        help='Specify the minimum at value of signals. Default: 90'
+        '-at_min', type=float, default=100,
+        help='Specify the minimum at value of signals. Default: 100'
     )
     parser.add_argument(
         '-tol_at_area', type=float, default=2.0,
@@ -50,9 +50,9 @@ def parse_args():
              'Default: 2.0'
     )
     parser.add_argument(
-        '-tol_at_shift', type=float, default=1,
+        '-tol_at_shift', type=float, default=1.0,
         help='Specify the millisecond tolerance when considering signal '
-             'related. Default: 1'
+             'related. Default: 1.0'
     )
     parser.add_argument(
         '-tol_ppm', type=float, default=30,
@@ -60,18 +60,23 @@ def parse_args():
              'Default: 30'
     )
     parser.add_argument(
-        '-tol_iso_num', type=int, default=2,
+        '-tol_iso_num', type=int, default=1,
         help='Specify how many isotopes should have to be a precursor. '
-             'Default: 2, i.e. M, M+1H, M+2H'
+             'Default: 1, i.e. M, M+1'
     )
     parser.add_argument(
-        '-tol_pcc', type=float, default=0.4,
-        help='Specify the PCC tolerance when two signal are related. Default: 0.4'
+        '-tol_pcc', type=float, default=0.3,
+        help='Specify the PCC tolerance when two signal are related. Default: 0.3'
     )
     parser.add_argument(
-        '-tol_point_num', type=int, default=5,
-        help='Specify the point num tolerance that a signal should have. '
+        '-tol_neighbor1_num', type=int, default=5,
+        help='Specify the neighbor num tolerance that a MS1 signal should have. '
              'Default: 5'
+    )
+    parser.add_argument(
+        '-tol_neighbor2_num', type=int, default=3,
+        help='Specify the neighbor num tolerance that a MS2 signal should have. '
+             'Default: 3'
     )
     parser.add_argument(
         '-tol_fg_num', type=int, default=10,
@@ -110,6 +115,7 @@ def main():
     Logger.set_logger(outdir)
     logger = Logger.get_logger()
     logger.info('xTracer, for SLIM with high resolution ion mobility')
+    logger.info(vars(args))
     for fi, fin in enumerate(fin_v):
         logger.info(f'Processing {fi+1}/{len(fin_v)} in {run_mode} mode')
         fout = outdir / (fin.stem + '.mgf')

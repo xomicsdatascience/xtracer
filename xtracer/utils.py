@@ -1,5 +1,7 @@
+import pandas as pd
 import numpy as np
-from numba import jit, prange
+
+from numba import jit, prange, njit
 from xtracer.log import Logger
 
 logger = Logger.get_logger()
@@ -11,7 +13,7 @@ except:
 
 
 C13_DELTA = 1.0033548378
-MGF_BUFFER_FLUSH = 5_000_000  # ~5 MB
+MGF_BUFFER_FLUSH = 50_000_000  # ~50 MB
 
 
 @jit(nopython=True)
@@ -67,9 +69,24 @@ def merge_frames_core(at1, mz1, h1, at2, mz2, h2, mz_tol=0.0001, at_tol=0.001):
         at_diff = abs(at1[i] - at2[j])
 
         if abs(mz_diff) <= mz_tol and at_diff <= at_tol:
-            merged_mz[idx] = (mz1[i] + mz2[j]) * 0.5
-            merged_at[idx] = (at1[i] + at2[j]) * 0.5
+            # 加权
+            # wsum = w1 + w2
+            # merged_mz[idx] = (mz1[i] * w1 + mz2[j] * w2) / wsum
+            # merged_at[idx] = (at1[i] * w1 + at2[j] * w2) / wsum
+            # merged_h[idx] = wsum
+            # 平均
+            # merged_mz[idx] = (mz1[i] + mz2[j]) * 0.5
+            # merged_at[idx] = (at1[i] + at2[j]) * 0.5
+            # merged_h[idx] = h1[i] + h2[j]
+            # 高强度
+            if h1[i] > h2[j]:
+                merged_mz[idx] = mz1[i]
+                merged_at[idx] = at1[i]
+            else:
+                merged_mz[idx] = mz2[j]
+                merged_at[idx] = at2[j]
             merged_h[idx] = h1[i] + h2[j]
+
             idx += 1
             i += 1
             j += 1
@@ -271,46 +288,126 @@ def get_xics(frame_at, frame_mz, frame_height,
         xics[idx_i, :] = xic
     return xics
 
-
-@jit(nopython=True, parallel=True)
+@jit(nopython=True, nogil=True, parallel=True)
 def find_isotope_cluster(
         frame1_at, frame1_mz, frame1_height,
-        idx_max_points, xixs1,
+        idx_max_points, is_apex_v, xixs1,
         charge_min, charge_max, tol_iso_num,
-        tol_at_area, tol_at_shift, tol_ppm
+        tol_at_area, tol_at_shift, tol_ppm, tol_pcc
 ):
-    results = np.zeros((len(idx_max_points),
-                        (charge_max - charge_min + 1),
-                        tol_iso_num))
+    '''
+    state_left_m是二维，因为只用看一个
+    state_right_m是三维，因为可能需要同时考虑多个isotope
+    state_gaussian_m：当左右都不存在，还要考察自身
+    state is True when 1. 符合强度规律 2. 符合pcc阈值
+    '''
+    xix_gaussian = np.array(
+        [0.0044, 0.054, 0.242, 0.399, 0.242, 0.054, 0.0044], dtype=np.float32
+    )
 
-    for idx_i in prange(len(idx_max_points)):
+    n_point = np.sum(is_apex_v)
+    n_charge = charge_max - charge_min + 1
+    apex_prefix = np.cumsum(is_apex_v) - 1
+
+    state_left_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+    state_right_m = np.zeros((n_point, n_charge, tol_iso_num), dtype=np.bool_)
+    state_lone_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+
+    for idx_i in prange(len(is_apex_v)): # 125
+        if not is_apex_v[idx_i]:
+            continue
+        idx_apex = apex_prefix[idx_i]
+        # if idx_apex == 15:
+        #     a = 1
+
         i = idx_max_points[idx_i]
         i_at = frame1_at[i]
         i_mz = frame1_mz[i]
-        limit_mz = (i_mz + tol_iso_num * C13_DELTA) * (1 + 100 * 1e-6)
-        vec1 = xixs1[idx_i]
-        for idx_ii in range(idx_i + 1, len(idx_max_points)): # local maximum
-            ii = idx_max_points[idx_ii]
-            ii_at = frame1_at[ii]
-            bias_at = abs(ii_at - i_at)
-            if bias_at > tol_at_shift:
+        i_xix = xixs1[idx_i]
+        i_int = np.mean(i_xix[2:5])
+
+        for charge in range(charge_min, charge_max + 1):
+            # 先看M-1:
+            target_mz = i_mz - C13_DELTA / charge
+            limit_mz = target_mz * (1 - 50 * 1e-6)
+            for idx_ii in range(idx_i - 1, -1, -1):
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xix = xixs1[idx_ii]
+                ii_int = np.mean(ii_xix[2:5])
+                if ii_mz < limit_mz:
+                    break
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_int < i_int * 1:
+                    continue
+                bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
+                if bias_ppm > tol_ppm:
+                    continue
+                pcc = cal_pcc(i_xix, ii_xix)
+                if pcc > tol_pcc:
+                    state_left_m[idx_apex, charge-charge_min] = True
+                    break
+
+            # 如果有M-1, 不需要再看M+1
+            if state_left_m[idx_apex, charge-charge_min]:
                 continue
-            ii_mz = frame1_mz[ii]
-            if ii_mz > limit_mz:
-                break
-            for n_charge in range(charge_min, charge_max+1):
+
+            # 再看M+1:
+            found_right = False
+            limit_mz = (i_mz + tol_iso_num * C13_DELTA / charge) * (1 + 50 * 1e-6)
+            for idx_ii in range(idx_i + 1, len(idx_max_points)): # local maximum
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xix = xixs1[idx_ii]
+                ii_int = np.mean(ii_xix[2:5])
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_mz > limit_mz:
+                    break
+                if (ii_int > i_int) or (ii_int < 0.2 * i_int):
+                    continue
                 for n_neutron in range(1, tol_iso_num+1):
-                    target_mz = i_mz + n_neutron * C13_DELTA / n_charge
+                    target_mz = i_mz + n_neutron * C13_DELTA / charge
                     bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
                     if bias_ppm > tol_ppm:
                         continue
-                    vec2 = xixs1[idx_ii]
-                    pcc = cal_pcc(vec1, vec2)
-                    # maximum pcc in case multiple points
-                    cur = results[idx_i, n_charge-charge_min, n_neutron-1]
-                    pcc = max(pcc, cur)
-                    results[idx_i, n_charge-charge_min, n_neutron-1] = pcc
-    return results
+                    pcc = cal_pcc(i_xix, ii_xix)
+                    if pcc > tol_pcc:
+                        state_right_m[idx_apex, charge-charge_min, n_neutron-1] = True
+                        found_right = True
+                        break
+
+            # 无M-1, 无M+N
+            if not found_right:
+                pcc = cal_pcc(i_xix, xix_gaussian)
+                if pcc > 0.75:
+                    state_lone_m[idx_apex, charge-charge_min] = True
+
+    return state_left_m, state_right_m, state_lone_m
+
+
+def get_states(state_left_m, state_right_m, state_lone_m, allow_lone):
+    '''
+    单电荷规则: 左无右有，则该电荷有；其他则该电荷无
+    跨电荷规则：左无右无，gaussian有，则全电荷有
+    '''
+    # Step 1: 单电荷规则
+    final_m = (~state_left_m) & state_right_m
+
+    # Step 2: 跨电荷规则
+    # 选出那些单电荷规则后全 False 的行
+    mask_all_false = ~final_m.any(axis=1)
+
+    # 如果该行的 lone 全 True，则将整个行置 True
+    mask_lone = mask_all_false & state_lone_m.all(axis=1)
+
+    if allow_lone:
+        final_m[mask_lone, 0] = True
+
+    return final_m
 
 
 @jit(nopython=True, parallel=True)
@@ -381,25 +478,188 @@ def compute_log_points(n_total, n_print=10):
 
 def print_log(
         frame_i, n_total,
-        frame1_at, idx_max1_points, idx_cluster1_points,
-        frame2_at, idx_max2_points
+        frame1_at, idx_max1, idx_apex1, idx_cluster1,
+        frame2_at, idx_max2
 ):
     log_points = compute_log_points(n_total, n_print=10)
     if frame_i in log_points:
         info = (f'{frame_i}/{n_total}, '
                 f'{len(frame1_at)}, '
-                f'{len(idx_max1_points)}, '
-                f'{len(idx_cluster1_points)}, '
+                f'{len(idx_max1)}, '
+                f'{len(idx_apex1)}, '
+                f'{len(idx_cluster1)}, '
                 f'{len(frame2_at)}, '
-                f'{len(idx_max2_points)}'
+                f'{len(idx_max2)}'
         )
         logger.info(info)
     if frame_i+1 in log_points:
         info = (f'{frame_i}/{n_total}, '
                 f'{len(frame1_at)}, '
-                f'{len(idx_max1_points)}, '
-                f'{len(idx_cluster1_points)}, '
+                f'{len(idx_max1)}, '
+                f'{len(idx_apex1)}, '
+                f'{len(idx_cluster1)}, '
                 f'{len(frame2_at)}, '
-                f'{len(idx_max2_points)}'
+                f'{len(idx_max2)}'
         )
         logger.info(info)
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
+def plot_isotope(target_mz, z, target_at,
+                 frame_mz, frame_at, frame_int,
+                 ppm=30, at_tol=3):
+
+    frame_mz = np.asarray(frame_mz)
+    frame_at = np.asarray(frame_at)
+    frame_int = np.asarray(frame_int)
+
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4), sharey=True)
+
+    labels = ["M-1", "M", "M+1", "M+2"]
+
+    inv_mass = 1.003355
+
+    for i, ax in enumerate(axes):
+
+        # isotope center in m/z
+        iso_mz = target_mz + (i - 1) * inv_mass / z
+        mz_tol = iso_mz * ppm * 1e-6
+
+        # ⚠️ IMPORTANT:
+        # mz is centered at iso_mz
+        # at is centered at target_at (NOT iso_mz)
+        mask = (
+            (np.abs(frame_mz - iso_mz) <= mz_tol) &
+            (np.abs(frame_at - target_at) <= at_tol)
+        )
+
+        # relative coordinates
+        x = frame_mz[mask] - iso_mz
+        y = frame_at[mask] - target_at
+
+        inten = frame_int[mask]
+        total_int = np.sum(inten)
+
+        # s = inten
+        # s = s / s.max() * 50
+        # ax.scatter(x, y, s=s, c="red", alpha=0.7)
+        ax.scatter(x, y, s=8, c="red", alpha=0.7)
+
+        # center = isotope center projected into (0,0)
+        # ax.scatter([0], [0], c="black", s=50, marker="x")
+
+        # window box (centered correctly per panel)
+        rect = patches.Rectangle(
+            (-mz_tol, -at_tol),
+            2 * mz_tol,
+            2 * at_tol,
+            linewidth=2,
+            edgecolor='blue',
+            facecolor='none',
+            linestyle='--'
+        )
+        ax.add_patch(rect)
+
+        ax.axhline(0, linewidth=0.5)
+        ax.axvline(0, linewidth=0.5)
+
+        xticks = np.linspace(-mz_tol, mz_tol, 5)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(np.round(xticks / iso_mz * 1e6, 1))
+
+        ax.set_xlabel("ppm error")
+
+        if i == 0:
+            ax.set_ylabel("Δ AT (ms)")
+
+        ax.set_title(f"{labels[i]} | sum={total_int:.0f}")
+
+        ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.5)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def cal_recall(
+    result_tmp,
+    rt_tol=2,
+    at_tol=5.0,
+    ppm_tol=30.0,
+):
+    # --- 1. flatten ---
+    rts_all = np.concatenate([np.asarray(x[0]) for x in result_tmp])
+    ats_all = np.concatenate([x[1] for x in result_tmp])
+    mzs_all = np.concatenate([x[2] for x in result_tmp])
+
+    # --- 2. df ---
+    df = pd.read_csv(r"D:\Jesse\xtracer\data_mbi2\test\miss.tsv", sep='\t')
+    df_rt = df["RT"].values
+    df_at = df["at"].values
+    df_mz = df["pr_mz_0"].values
+
+    N = len(df_rt)
+    P = len(rts_all)
+
+    # --- sort once ---
+    idx_t = np.argsort(df_rt)
+    rt_s = df_rt[idx_t]
+    at_s = df_at[idx_t]
+    mz_s = df_mz[idx_t]
+
+    idx_p = np.argsort(rts_all)
+    rts = rts_all[idx_p]
+    ats = ats_all[idx_p]
+    mzs = mzs_all[idx_p]
+
+    hit_df = np.zeros(N, dtype=np.bool_)
+
+    @njit
+    def sweep(rt_s, at_s, mz_s, rts, ats, mzs,
+              idx_t, hit_df,
+              rt_tol, at_tol, ppm_tol):
+
+        N = rt_s.shape[0]
+        P = rts.shape[0]
+
+        j_left = 0
+        j_right = 0
+
+        for i in range(P):
+
+            rt_i = rts[i]
+            at_i = ats[i]
+            mz_i = mzs[i]
+
+            # expand right
+            while j_right < N and rt_s[j_right] <= rt_i + rt_tol:
+                j_right += 1
+
+            # shrink left
+            while j_left < N and rt_s[j_left] < rt_i - rt_tol:
+                j_left += 1
+
+            # scan window directly (NO slicing!)
+            for j in range(j_left, j_right):
+
+                if abs(at_s[j] - at_i) >= at_tol:
+                    continue
+
+                ppm = abs(mz_s[j] - mz_i) / mz_s[j] * 1e6
+                if ppm < ppm_tol:
+                    hit_df[idx_t[j]] = True
+
+        return hit_df
+
+    # --- run ---
+    hit_df = sweep(rt_s, at_s, mz_s,
+                   rts, ats, mzs,
+                   idx_t,
+                   hit_df,
+                   rt_tol, at_tol, ppm_tol)
+
+    recall = hit_df.mean()
+
+    logger.info(f'Targets: {len(df)}, Points: {len(rts_all)}, Recall: {recall:.2f}')
