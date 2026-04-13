@@ -147,7 +147,7 @@ def main(args, indir, outdir, mode):
                 frame2_at, frame2_mz, frame2_height,
                 tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
                 tol_point_num=args.tol_neighbor2_num,
-                mz_min=50, at_min=args.at_min,
+                mz_min=100, at_min=args.at_min,
             )
             if mode in ['xic', 'xix']:
                 xics2 = get_xics(
@@ -207,7 +207,8 @@ def main(args, indir, outdir, mode):
                 pr_idx = idx_cluster1[idx_col]
                 pcc_v = pcc_ms2_m[:, idx_col]
                 # fg num
-                fg_num = (pcc_v > args.tol_pcc).sum()
+                pcc_good = pcc_v > args.tol_pcc
+                fg_num = pcc_good.sum()
                 if fg_num < args.tol_fg_num:
                     continue
                 # charge
@@ -217,20 +218,20 @@ def main(args, indir, outdir, mode):
                 pr_mz = frame1_mz[pr_idx]
                 pr_height = frame1_height[pr_idx]
                 # fg
-                fg_idx = idx_max2[pcc_v > args.tol_pcc]
+                fg_idx = idx_max2[pcc_good]
                 scan_mz = frame2_mz[fg_idx]
                 scan_height = frame2_height[fg_idx]
-                scan_pcc = pcc_v[pcc_v > args.tol_pcc]
-                assert len(scan_mz) == len(scan_pcc)
+                assert len(scan_mz) == len(scan_height)
                 # 不同charge也是相同scan_mz
                 if args.write_pcc:
+                    scan_pcc = pcc_v[pcc_good]
                     peak_str = "\n".join(
                         f"{m:.6f} {h:.2f} {p:.2f}" for m, h, p in
                         zip(scan_mz, scan_height, scan_pcc))
                 else:
-                    peak_str = "\n".join(f"{m:.6f} {h:.2f}" for m, h in
-                                         zip(scan_mz, scan_height))
-                peak_block = (peak_str + "\nEND IONS\n\n").encode()
+                    # peak_str = "\n".join([f"{m:.6f} {h:.2f}" for m, h in zip(scan_mz, scan_height)])
+                    peak_str = format_mz_int(scan_mz, scan_height)
+                peak_block = peak_str + b"END IONS\n\n"
                 common_header = f"RTINSECONDS={frame_rt:.2f}\nAT={pr_at:.2f}\nPEPMASS={pr_mz:.6f} {pr_height:.2f}\n".encode()
 
                 # write

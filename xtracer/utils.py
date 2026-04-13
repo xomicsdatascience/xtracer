@@ -193,6 +193,63 @@ def find_local_maximum(
     return np.where(result_is_max == True)[0]
 
 
+@jit(nopython=True, parallel=True)
+def cal_local_snr(
+        frame_at, frame_mz, frame_height,
+        tol_at_area, tol_ppm, mz_min, at_min, alpha=0.5, noise_floor_frac=0.05
+):
+    n = len(frame_at)
+    snr_values = np.zeros(n, dtype=np.float64)
+
+    for i in prange(n):
+        if (frame_mz[i] < mz_min) or (frame_at[i] < at_min):
+            continue
+
+        i_mz = frame_mz[i]
+        i_at = frame_at[i]
+        peak_h = frame_height[i]
+
+        # 累加窗口内统计量
+        sum_h = peak_h
+        sum_h2 = peak_h * peak_h
+        cnt = 1
+
+        # 向右扫描
+        for ii in range(i + 1, n):
+            bias_ppm = 1e6 * abs(frame_mz[ii] - i_mz) / i_mz
+            if bias_ppm > tol_ppm:
+                break
+            if abs(frame_at[ii] - i_at) > tol_at_area:
+                continue
+            h = frame_height[ii]
+            sum_h += h
+            sum_h2 += h * h
+            cnt += 1
+
+        # 向左扫描
+        for ii in range(i - 1, -1, -1):
+            bias_ppm = 1e6 * abs(frame_mz[ii] - i_mz) / i_mz
+            if bias_ppm > tol_ppm:
+                break
+            if abs(frame_at[ii] - i_at) > tol_at_area:
+                continue
+            h = frame_height[ii]
+            sum_h += h
+            sum_h2 += h * h
+            cnt += 1
+
+        # 窗口统计量
+        mean_h = sum_h / cnt
+        var = max(0.0, sum_h2 / cnt - mean_h * mean_h)
+        std_h = np.sqrt(var)
+        # 🔹 连续噪声估计：标准差 + 相对底噪（避免cnt小或平坦区数值爆炸）
+        noise = max(std_h, peak_h * noise_floor_frac)
+        # 🔹 连续隔离度：峰形尖锐度 + 点数稀疏度（全区间平滑，无分支）
+        isolation = max(0.0, 1.0 - mean_h / peak_h) + 1.0 / cnt
+        snr_values[i] = (peak_h / noise) * (1.0 + alpha * isolation)
+        return snr_values
+
+
 @jit(nopython=True)
 def get_xim(frame_at, frame_mz, frame_height,
             idx, tol_at_area, tol_ppm, n_bins
@@ -244,10 +301,23 @@ def get_xims(frame_at, frame_mz, frame_height,
     return xims
 
 
+@njit(cache=True)
+def binary_search_start(arr, limit):
+    """Numba 版二分查找：返回首个 >= limit 的索引"""
+    left, right = 0, len(arr)
+    while left < right:
+        mid = (left + right) >> 1
+        if arr[mid] < limit:
+            left = mid + 1
+        else:
+            right = mid
+    return left
+
+
 @jit(nopython=True)
-def get_xic(frames, target_at, target_mz,
-            tol_at_area, tol_ppm
-            ):
+def get_xic(
+        frames, target_at, target_mz, tol_at_area, tol_ppm
+):
     mz_limit_left = target_mz * (1 - tol_ppm * 1e-6)
     mz_limit_right = target_mz * (1 + tol_ppm * 1e-6)
     at_limit_left = target_at - tol_at_area
@@ -257,17 +327,14 @@ def get_xic(frames, target_at, target_mz,
 
     for frame_i in range(len(frames)):
         frame_at, frame_mz, frame_height = frames[frame_i]
-        for i in range(len(frame_at)):
-            at, mz = frame_at[i], frame_mz[i]
-            if mz < mz_limit_left:
-                continue
+        start = binary_search_start(frame_mz, mz_limit_left)
+        for i in range(start, len(frame_mz)):
+            mz = frame_mz[i]
             if mz > mz_limit_right:
                 break
-            if at < at_limit_left:
-                continue
-            if at > at_limit_right:
-                continue
-            vec[frame_i] += frame_height[i]
+            at = frame_at[i]
+            if at_limit_left <= at <= at_limit_right:
+                vec[frame_i] += frame_height[i]
     vec = smooth_vec(vec)
     return vec
 
@@ -595,7 +662,7 @@ def cal_recall(
     mzs_all = np.concatenate([x[2] for x in result_tmp])
 
     # --- 2. df ---
-    df = pd.read_csv(r"D:\Jesse\xtracer\data_mbi2\test\miss.tsv", sep='\t')
+    df = pd.read_csv(r"D:\Jesse\xtracer\data_mbi2\test_25ng\miss.tsv", sep='\t')
     df_rt = df["RT"].values
     df_at = df["at"].values
     df_mz = df["pr_mz_0"].values
@@ -663,3 +730,67 @@ def cal_recall(
     recall = hit_df.mean()
 
     logger.info(f'Targets: {len(df)}, Points: {len(rts_all)}, Recall: {recall:.2f}')
+
+
+@jit(nopython=True)
+def format_mz_int_core(mz, h, buf):
+    """Numba 内核：m/z 保留4位小数，h 保留整数"""
+    n = len(mz)
+    pos = 0
+    for i in range(n):
+        mz_int = int(np.round(mz[i] * 10_000))
+        h_int = int(np.round(h[i]))
+
+        # m/z 整数部分
+        val = abs(mz_int) // 10_000
+        if mz_int < 0: buf[pos] = 45; pos += 1
+        if val == 0:
+            buf[pos] = 48; pos += 1
+        else:
+            tmp, digits = val, 0
+            while tmp > 0: digits += 1; tmp //= 10
+            div = 10 ** (digits - 1)
+            for _ in range(digits):
+                buf[pos] = 48 + (val // div) % 10
+                div //= 10;
+                pos += 1
+        buf[pos] = 46;
+        pos += 1
+        frac = abs(mz_int) % 10_000
+        for _ in range(4):
+            buf[pos] = 48 + (frac // 1_000)
+            frac = (frac % 1_000) * 10;
+            pos += 1
+
+        buf[pos] = 32;
+        pos += 1  # ' '
+
+        # h 整数部分
+        val = abs(h_int)
+        if h_int < 0: buf[pos] = 45; pos += 1
+        if val == 0:
+            buf[pos] = 48; pos += 1
+        else:
+            tmp, digits = val, 0
+            while tmp > 0: digits += 1; tmp //= 10
+            div = 10 ** (digits - 1)
+            for _ in range(digits):
+                buf[pos] = 48 + (val // div) % 10
+                div //= 10;
+                pos += 1
+
+        buf[pos] = 10;
+        pos += 1  # '\n'
+    return pos
+
+
+def format_mz_int(mz, h):
+    """安全包装器：自动处理类型/连续性/缓冲区"""
+    mz = np.ascontiguousarray(mz, dtype=np.float32)
+    h = np.ascontiguousarray(h, dtype=np.float32)
+    n = len(mz)
+    if n != len(h): raise ValueError("长度不一致")
+    if n == 0: return b""
+    buf = np.empty(n * 24, dtype=np.uint8)
+    written = format_mz_int_core(mz, h, buf)
+    return buf[:written].tobytes()
