@@ -160,37 +160,27 @@ def find_local_maximum(
         i_height = frame_height[i]
         is_max = True
         area_cnt = 1
+        tol_da = i_mz * tol_ppm * 1e-6
         # check right
         for ii in range(i + 1, len(frame_at)):
-            ii_at = frame_at[ii]
-            ii_mz = frame_mz[ii]
-            ii_height = frame_height[ii]
-            bias_ppm = 1e6 * abs(ii_mz - i_mz) / i_mz
-            bias_at = abs(ii_at - i_at)
-            if bias_ppm > tol_ppm:
+            if frame_mz[ii] - i_mz > tol_da:
                 break
-            if bias_at > tol_at_area:
-                continue
-            area_cnt += 1
-            if ii_height > i_height:
-                is_max = False
+            if abs(frame_at[ii] - i_at) < tol_at_area:
+                area_cnt += 1
+                if frame_height[ii] > i_height:
+                    is_max = False
         # check left
         for ii in range(i - 1, -1, -1):
-            ii_at = frame_at[ii]
-            ii_mz = frame_mz[ii]
-            ii_height = frame_height[ii]
-            bias_ppm = 1e6 * abs(ii_mz - i_mz) / i_mz
-            bias_at = abs(ii_at - i_at)
-            if bias_ppm > tol_ppm:
+            if i_mz - frame_mz[ii] > tol_da:
                 break
-            if bias_at > tol_at_area:
-                continue
-            area_cnt += 1
-            if ii_height > i_height:
-                is_max = False
+            if abs(frame_at[ii] - i_at) <= tol_at_area:
+                area_cnt += 1
+                if frame_height[ii] > i_height:
+                    is_max = False
         if is_max and (area_cnt > tol_point_num):
             result_is_max[i] = is_max
-    return np.where(result_is_max == True)[0]
+
+    return np.where(result_is_max)[0]
 
 
 @jit(nopython=True, parallel=True)
