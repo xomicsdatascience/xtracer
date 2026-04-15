@@ -70,23 +70,12 @@ def merge_frames_core(at1, mz1, h1, at2, mz2, h2, mz_tol=0.0001, at_tol=0.001):
 
         if abs(mz_diff) <= mz_tol and at_diff <= at_tol:
             # 加权
-            # wsum = w1 + w2
-            # merged_mz[idx] = (mz1[i] * w1 + mz2[j] * w2) / wsum
-            # merged_at[idx] = (at1[i] * w1 + at2[j] * w2) / wsum
-            # merged_h[idx] = wsum
-            # 平均
-            # merged_mz[idx] = (mz1[i] + mz2[j]) * 0.5
-            # merged_at[idx] = (at1[i] + at2[j]) * 0.5
-            # merged_h[idx] = h1[i] + h2[j]
-            # 高强度
-            if h1[i] > h2[j]:
-                merged_mz[idx] = mz1[i]
-                merged_at[idx] = at1[i]
-            else:
-                merged_mz[idx] = mz2[j]
-                merged_at[idx] = at2[j]
-            merged_h[idx] = h1[i] + h2[j]
-
+            w1 = h1[i]
+            w2 = h2[j]
+            wsum = w1 + w2
+            merged_mz[idx] = (mz1[i] * w1 + mz2[j] * w2) / wsum
+            merged_at[idx] = (at1[i] * w1 + at2[j] * w2) / wsum
+            merged_h[idx] = wsum
             idx += 1
             i += 1
             j += 1
@@ -140,7 +129,12 @@ def merge_frames(deque_frame, merge_num=None):
         frame_at, frame_mz, frame_h = merge_frames_core(
             frame_at, frame_mz, frame_h, at, mz, h
         )
-    assert np.all(frame_mz[:-1] <= frame_mz[1:])  # sorted
+    if not np.all(frame_mz[:-1] <= frame_mz[1:]):
+        # 按 m/z 排序，同步重排 at 和 h
+        idx = np.argsort(frame_mz)
+        frame_mz = np.ascontiguousarray(frame_mz[idx])
+        frame_at = np.ascontiguousarray(frame_at[idx])
+        frame_h = np.ascontiguousarray(frame_h[idx])
     return frame_at, frame_mz, frame_h
 
 
