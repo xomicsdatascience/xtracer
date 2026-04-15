@@ -18,6 +18,12 @@ def save_frame_result(frame_rt, frame_ats, frame_mzs, idx):
     return rts, ats, mzs
 
 
+def check_ms(ats, mzs, ints):
+    assert (ats.max() > 300 and ats.max() < 450)
+    assert (mzs.min() > 10 and mzs.max() < 5000)
+    assert ints.min() > 0
+
+
 @profile
 def main(args, indir, outdir, mode):
     # read .mbi
@@ -41,22 +47,16 @@ def main(args, indir, outdir, mode):
             if frame_levels[frame_i] != 2: # level-1 --> MS2
                 continue
 
-            # RT = 1422.176857
-            # frame_i = np.where(frame_levels == 2)[0][
-            #     np.argmin(np.abs(frame_rts[frame_levels == 2] - RT))
-            # ]
-
             # load frames
             mbi.load_frames_to_deque(int(frame_i))
             frame1_deque = mbi.deque_frame1
             frame2_deque = mbi.deque_frame2
 
             # merge frames for maximum points
-            frame1_at, frame1_mz, frame1_height = merge_frames(
-                mbi.deque_frame1, 3)
-            frame2_at, frame2_mz, frame2_height = merge_frames(
-                mbi.deque_frame2, 3)
-            assert (frame1_at.max() > 300 and frame2_at.max() < 450)
+            frame1_at, frame1_mz, frame1_height = merge_frames(mbi.deque_frame1, 3)
+            frame2_at, frame2_mz, frame2_height = merge_frames(mbi.deque_frame2, 3)
+            check_ms(frame1_at, frame1_mz, frame1_height)
+            check_ms(frame2_at, frame2_mz, frame2_height)
 
             # local maximum points
             idx_max1 = find_local_maximum(
@@ -86,7 +86,7 @@ def main(args, indir, outdir, mode):
                 # is_apex1 = (xics1[:, 3] >= xics1[:, 4]) & (xics1[:, 3] >= xics1[:, 2])
                 is_apex1 = xics1[:, 3] > 0
                 idx_apex1 = idx_max1[is_apex1]
-                left_m, right_m, gaussian_m = find_isotope_cluster(
+                left_m, right_m, gaussian_m = find_isotope_cluster_xic(
                     frame1_at, frame1_mz, frame1_height,
                     idx_max1, is_apex1, xics1,
                     charge_min=args.charge_min, charge_max=args.charge_max,
@@ -95,9 +95,7 @@ def main(args, indir, outdir, mode):
                     tol_pcc=args.tol_pcc
                 )
                 right_m = np.all(right_m, axis=-1)
-                state_m = get_states(
-                    left_m, right_m, gaussian_m, allow_lone=False
-                )
+                state_m = get_states(left_m, right_m, gaussian_m, allow_lone=False)
                 xics1 = xics1[is_apex1]
                 cluster_idx = state_m.any(axis=-1)
                 state_m = state_m[cluster_idx]
@@ -111,33 +109,42 @@ def main(args, indir, outdir, mode):
         # cal_recall(tmp_max)
         # cal_recall(tmp_apex)
         # cal_recall(tmp_cluster)
-
-            elif mode == 'xim':
-                pcc_cluster1_m = find_isotope_cluster(
+            if mode == 'xim':
+                is_apex1 = np.ones(len(idx_max1), dtype=bool)
+                idx_apex1 = idx_max1[is_apex1]
+                left_m, right_m, gaussian_m = find_isotope_cluster_xim(
                     frame1_at, frame1_mz, frame1_height,
-                    idx_max1, xims1,
+                    idx_max1, is_apex1, xims1,
                     charge_min=args.charge_min, charge_max=args.charge_max,
                     tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
                     tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
+                    tol_pcc=args.tol_pcc
                 )
-            elif mode == 'xix':
-                pcc_cluster1_m_xic = find_isotope_cluster(
+                right_m = np.all(right_m, axis=-1)
+                state_m = get_states(left_m, right_m, gaussian_m, allow_lone=False)
+                xims1 = xims1[is_apex1]
+                cluster_idx = state_m.any(axis=-1)
+                state_m = state_m[cluster_idx]
+                xims1 = xims1[cluster_idx]
+                idx_cluster1 = idx_apex1[cluster_idx]
+            if mode == 'xix':
+                is_apex1 = xics1[:, 3] > 0
+                idx_apex1 = idx_max1[is_apex1]
+                left_m, right_m, gaussian_m = find_isotope_cluster_xix(
                     frame1_at, frame1_mz, frame1_height,
-                    idx_max1, xics1,
+                    idx_max1, is_apex1, xics1, xims1,
                     charge_min=args.charge_min, charge_max=args.charge_max,
                     tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
-                    tol_at_area=args.tol_at_area,
-                    tol_at_shift=args.tol_at_shift,
+                    tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
+                    tol_pcc=args.tol_pcc
                 )
-                pcc_cluster1_m_xim = find_isotope_cluster(
-                    frame1_at, frame1_mz, frame1_height,
-                    idx_max1, xims1,
-                    charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
-                    tol_at_area=args.tol_at_area,
-                    tol_at_shift=args.tol_at_shift,
-                )
-                pcc_cluster1_m = (pcc_cluster1_m_xic + pcc_cluster1_m_xim) / 2
+                right_m = np.all(right_m, axis=-1)
+                state_m = get_states(left_m, right_m, gaussian_m, allow_lone=False)
+                xims1, xics1 = xims1[is_apex1], xics1[is_apex1]
+                cluster_idx = state_m.any(axis=-1)
+                state_m = state_m[cluster_idx]
+                xims1, xics1 = xims1[cluster_idx], xics1[cluster_idx]
+                idx_cluster1 = idx_apex1[cluster_idx]
 
             if len(idx_cluster1) == 0:
                 continue

@@ -339,8 +339,9 @@ def get_xics(frame_at, frame_mz, frame_height,
         xics[idx_i, :] = xic
     return xics
 
+
 @jit(nopython=True, nogil=True, parallel=True)
-def find_isotope_cluster(
+def find_isotope_cluster_xic(
         frame1_at, frame1_mz, frame1_height,
         idx_max_points, is_apex_v, xixs1,
         charge_min, charge_max, tol_iso_num,
@@ -368,8 +369,6 @@ def find_isotope_cluster(
         if not is_apex_v[idx_i]:
             continue
         idx_apex = apex_prefix[idx_i]
-        # if idx_apex == 15:
-        #     a = 1
 
         i = idx_max_points[idx_i]
         i_at = frame1_at[i]
@@ -436,6 +435,223 @@ def find_isotope_cluster(
                 pcc = cal_pcc(i_xix, xix_gaussian)
                 if pcc > 0.75:
                     state_lone_m[idx_apex, charge-charge_min] = True
+
+    return state_left_m, state_right_m, state_lone_m
+
+
+@jit(nopython=True, nogil=True, parallel=True)
+def find_isotope_cluster_xim(
+        frame1_at, frame1_mz, frame1_height,
+        idx_max_points, is_apex_v, xixs1,
+        charge_min, charge_max, tol_iso_num,
+        tol_at_area, tol_at_shift, tol_ppm, tol_pcc
+):
+    '''
+    state_left_m是二维，因为只用看一个
+    state_right_m是三维，因为可能需要同时考虑多个isotope
+    state_gaussian_m：当左右都不存在，还要考察自身
+    state is True when 1. 符合强度规律 2. 符合pcc阈值
+    '''
+    xim_gaussian = np.array([
+            0.000061, 0.000854, 0.005554, 0.022217,
+            0.061096, 0.122192, 0.183105, 0.209473,
+            0.183105, 0.122192, 0.061096, 0.022217,
+            0.005554, 0.000854, 0.000061
+        ], dtype=np.float32)
+
+    n_point = np.sum(is_apex_v)
+    n_charge = charge_max - charge_min + 1
+    apex_prefix = np.cumsum(is_apex_v) - 1
+
+    state_left_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+    state_right_m = np.zeros((n_point, n_charge, tol_iso_num), dtype=np.bool_)
+    state_lone_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+
+    for idx_i in prange(len(is_apex_v)):
+        if not is_apex_v[idx_i]:
+            continue
+        idx_apex = apex_prefix[idx_i]
+
+        i = idx_max_points[idx_i]
+        i_at = frame1_at[i]
+        i_mz = frame1_mz[i]
+        i_xix = xixs1[idx_i]
+        i_int = frame1_height[i]
+
+        for charge in range(charge_min, charge_max + 1):
+            # 先看M-1:
+            target_mz = i_mz - C13_DELTA / charge
+            limit_mz = target_mz * (1 - 50 * 1e-6)
+            for idx_ii in range(idx_i - 1, -1, -1):
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xix = xixs1[idx_ii]
+                ii_int = frame1_height[ii]
+                if ii_mz < limit_mz:
+                    break
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_int < i_int * 1:
+                    continue
+                bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
+                if bias_ppm > tol_ppm:
+                    continue
+                pcc = cal_pcc(i_xix, ii_xix)
+                if pcc > tol_pcc:
+                    state_left_m[idx_apex, charge-charge_min] = True
+                    break
+
+            # 如果有M-1, 不需要再看M+1
+            if state_left_m[idx_apex, charge-charge_min]:
+                continue
+
+            # 再看M+1:
+            found_right = False
+            limit_mz = (i_mz + tol_iso_num * C13_DELTA / charge) * (1 + 50 * 1e-6)
+            for idx_ii in range(idx_i + 1, len(idx_max_points)): # local maximum
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xix = xixs1[idx_ii]
+                ii_int = frame1_height[ii]
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_mz > limit_mz:
+                    break
+                if (ii_int > i_int) or (ii_int < 0.2 * i_int):
+                    continue
+                for n_neutron in range(1, tol_iso_num+1):
+                    target_mz = i_mz + n_neutron * C13_DELTA / charge
+                    bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
+                    if bias_ppm > tol_ppm:
+                        continue
+                    pcc = cal_pcc(i_xix, ii_xix)
+                    if pcc > tol_pcc:
+                        state_right_m[idx_apex, charge-charge_min, n_neutron-1] = True
+                        found_right = True
+                        break
+
+            # 无M-1, 无M+N
+            if not found_right:
+                pcc = cal_pcc(i_xix, xim_gaussian)
+                if pcc > 0.75:
+                    state_lone_m[idx_apex, charge-charge_min] = True
+
+    return state_left_m, state_right_m, state_lone_m
+
+
+@jit(nopython=True, nogil=True, parallel=True)
+def find_isotope_cluster_xix(
+        frame1_at, frame1_mz, frame1_height,
+        idx_max_points, is_apex_v, xics1, xims1,
+        charge_min, charge_max, tol_iso_num,
+        tol_at_area, tol_at_shift, tol_ppm, tol_pcc
+):
+    '''
+    state_left_m是二维，因为只用看一个
+    state_right_m是三维，因为可能需要同时考虑多个isotope
+    state_gaussian_m：当左右都不存在，还要考察自身
+    state is True when 1. 符合强度规律 2. 符合pcc阈值
+    '''
+    xic_gaussian = np.array(
+        [0.0044, 0.054, 0.242, 0.399, 0.242, 0.054, 0.0044], dtype=np.float32
+    )
+    xim_gaussian = np.array([
+        0.000061, 0.000854, 0.005554, 0.022217,
+        0.061096, 0.122192, 0.183105, 0.209473,
+        0.183105, 0.122192, 0.061096, 0.022217,
+        0.005554, 0.000854, 0.000061
+    ], dtype=np.float32)
+
+    n_point = np.sum(is_apex_v)
+    n_charge = charge_max - charge_min + 1
+    apex_prefix = np.cumsum(is_apex_v) - 1
+
+    state_left_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+    state_right_m = np.zeros((n_point, n_charge, tol_iso_num), dtype=np.bool_)
+    state_lone_m = np.zeros((n_point, n_charge), dtype=np.bool_)
+
+    for idx_i in prange(len(is_apex_v)):
+        if not is_apex_v[idx_i]:
+            continue
+        idx_apex = apex_prefix[idx_i]
+
+        i = idx_max_points[idx_i]
+        i_at = frame1_at[i]
+        i_mz = frame1_mz[i]
+        i_xic = xics1[idx_i]
+        i_xim = xims1[idx_i]
+        i_int = frame1_height[i]
+
+        for charge in range(charge_min, charge_max + 1):
+            # 先看M-1:
+            target_mz = i_mz - C13_DELTA / charge
+            limit_mz = target_mz * (1 - 50 * 1e-6)
+            for idx_ii in range(idx_i - 1, -1, -1):
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xic = xics1[idx_ii]
+                ii_xim = xims1[idx_ii]
+                ii_int = frame1_height[ii]
+                if ii_mz < limit_mz:
+                    break
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_int < i_int * 1:
+                    continue
+                bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
+                if bias_ppm > tol_ppm:
+                    continue
+                pcc_xic = cal_pcc(i_xic, ii_xic)
+                pcc_xim = cal_pcc(i_xim, ii_xim)
+                pcc = (pcc_xic + pcc_xim) / 2
+                if pcc > tol_pcc:
+                    state_left_m[idx_apex, charge - charge_min] = True
+                    break
+
+            # 如果有M-1, 不需要再看M+1
+            if state_left_m[idx_apex, charge - charge_min]:
+                continue
+
+            # 再看M+1:
+            found_right = False
+            limit_mz = (i_mz + tol_iso_num * C13_DELTA / charge) * (
+                        1 + 50 * 1e-6)
+            for idx_ii in range(idx_i + 1, len(idx_max_points)):  # local maximum
+                ii = idx_max_points[idx_ii]
+                ii_at = frame1_at[ii]
+                ii_mz = frame1_mz[ii]
+                ii_xic = xics1[idx_ii]
+                ii_xim = xims1[idx_ii]
+                ii_int = frame1_height[ii]
+                if abs(ii_at - i_at) > tol_at_shift:
+                    continue
+                if ii_mz > limit_mz:
+                    break
+                if (ii_int > i_int) or (ii_int < 0.2 * i_int):
+                    continue
+                for n_neutron in range(1, tol_iso_num + 1):
+                    target_mz = i_mz + n_neutron * C13_DELTA / charge
+                    bias_ppm = 1e6 * abs(ii_mz - target_mz) / target_mz
+                    if bias_ppm > tol_ppm:
+                        continue
+                    pcc_xic = cal_pcc(i_xic, ii_xic)
+                    pcc_xim = cal_pcc(i_xim, ii_xim)
+                    pcc = (pcc_xic + pcc_xim) / 2
+                    if pcc > tol_pcc:
+                        state_right_m[idx_apex, charge - charge_min, n_neutron - 1] = True
+                        found_right = True
+                        break
+
+            # 无M-1, 无M+N
+            if not found_right:
+                pcc_xic = cal_pcc(i_xic, xic_gaussian)
+                pcc_xim = cal_pcc(i_xim, xim_gaussian)
+                pcc = (pcc_xic + pcc_xim) / 2
+                if pcc > 0.75:
+                    state_lone_m[idx_apex, charge - charge_min] = True
 
     return state_left_m, state_right_m, state_lone_m
 
