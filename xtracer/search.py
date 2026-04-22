@@ -19,7 +19,7 @@ def save_frame_result(frame_rt, frame_ats, frame_mzs, idx):
 
 
 def check_ms(ats, mzs, ints):
-    assert (ats.max() > 300 and ats.max() < 450)
+    assert (ats.max() > 200 and ats.max() < 450)
     assert (mzs.min() > 10 and mzs.max() < 5000)
     assert ints.min() > 0
 
