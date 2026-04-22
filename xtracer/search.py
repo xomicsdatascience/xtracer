@@ -39,6 +39,7 @@ def main(args, indir, outdir, mode):
     frame_rts = np.array(mbi.GetRetentionTimes())
     frame_levels = np.array(mbi.GetFrameMSLevels())
     tmp_max, tmp_apex, tmp_cluster = [], [], []
+    n_seed = 0
     with open(outdir, "wb", buffering=1024*1024*50) as f:
         buffer = bytearray()
         counter = 0
@@ -208,6 +209,7 @@ def main(args, indir, outdir, mode):
                       frame1_at, idx_max1, idx_apex1, idx_cluster1,
                       frame2_at, idx_max2
                       )
+            n_seed += len(idx_cluster1)
 
             # mgf
             for idx_col in np.arange(pcc_ms2_m.shape[1]):
@@ -254,4 +256,4 @@ def main(args, indir, outdir, mode):
                         buffer.clear()
         if buffer:
             f.write(buffer)
-
+        logger.info(f'n_seed: {n_seed}, n_spectra: {counter}')
