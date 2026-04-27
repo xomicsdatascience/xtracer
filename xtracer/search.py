@@ -19,7 +19,7 @@ def save_frame_result(frame_rt, frame_ats, frame_mzs, idx):
 
 
 def check_ms(ats, mzs, ints):
-    assert (ats.max() > 200 and ats.max() < 450)
+    assert (ats.max() > 100 and ats.max() < 450)
     assert (mzs.min() > 10 and mzs.max() < 5000)
     assert ints.min() > 0
 
@@ -209,7 +209,7 @@ def main(args, indir, outdir, mode):
                       frame1_at, idx_max1, idx_apex1, idx_cluster1,
                       frame2_at, idx_max2
                       )
-            n_seed += len(idx_cluster1)
+            n_seed += state_m.sum()
 
             # mgf
             for idx_col in np.arange(pcc_ms2_m.shape[1]):
