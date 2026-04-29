@@ -232,8 +232,8 @@ def main(args, indir, outdir, mode):
                 # fg
                 fg_idx = idx_max2[pcc_good]
                 scan_mz = frame2_mz[fg_idx]
-                scan_height = frame2_height[fg_idx]
-                # scan_height = max2_ints[pcc_good]
+                # scan_height = frame2_height[fg_idx]
+                scan_height = max2_ints[pcc_good]
                 assert len(scan_mz) == len(scan_height)
                 # 不同charge也是相同scan_mz
                 if args.write_pcc:
