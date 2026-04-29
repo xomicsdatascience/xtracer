@@ -178,6 +178,7 @@ def main(args, indir, outdir, mode):
                     tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
                     tol_ppm=args.tol_ppm
                 )
+                max2_ints = xics2[:, int(across_cycle_num/2)]
             elif mode == 'xim':
                 pcc_ms2_m = find_frag_match(
                     frame1_at, frame1_mz, frame1_height,
@@ -186,6 +187,7 @@ def main(args, indir, outdir, mode):
                     tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
                     tol_ppm=args.tol_ppm
                 )
+                max2_ints = xims2.sum(axis=-1)
             elif mode == 'xix':
                 pcc_ms2_m_xic = find_frag_match(
                     frame1_at, frame1_mz, frame1_height,
@@ -204,6 +206,7 @@ def main(args, indir, outdir, mode):
                     tol_ppm=args.tol_ppm
                 )
                 pcc_ms2_m = (pcc_ms2_m_xic + pcc_ms2_m_xim) / 2
+                max2_ints = xics2[:, int(across_cycle_num/2)]
 
             print_log(frame_i, len(frame_rts),
                       frame1_at, idx_max1, idx_apex1, idx_cluster1,
@@ -230,6 +233,7 @@ def main(args, indir, outdir, mode):
                 fg_idx = idx_max2[pcc_good]
                 scan_mz = frame2_mz[fg_idx]
                 scan_height = frame2_height[fg_idx]
+                # scan_height = max2_ints[pcc_good]
                 assert len(scan_mz) == len(scan_height)
                 # 不同charge也是相同scan_mz
                 if args.write_pcc:
