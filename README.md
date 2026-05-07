@@ -32,10 +32,14 @@ We recommend using [Conda](https://www.anaconda.com/) to create a Python environ
 >   Please send an SDK request email to [Mobilion Inc.](mailto:support@mobilionsystems.com), 
 >   and then copy the file *_mbisdk.pyd, MBI_SDK.dll and mbisdk.py* into the sdk folder under the xTracer installation directory.
 
+- We also recommend installing directly via GitHub:
+   ```bash
+   pip install git+https://github.com/xomicsdatascience/xtracer.git
+   ```
 ---
 ### Usage
 ```bash
-xtracer -ws_in "the folder that contains .mbi files" -xic -xim
+xtracer -ws_in "the folder that contains .mbi files" -xix
 ```
 All params are list below by entering `xtracer -h`:
 ```
@@ -45,6 +49,7 @@ optional arguments for users:
   -out_name OUT_NAME             Specify the folder name that contains .mgf files. Default: mgf_xtracer
   -xic                           Using XIC-based method to calculate PCC
   -xim                           Using XIM-based method to calculate PCC
+  -xix                           Using XIM + XIC method to calculate PCC
   -write_pcc                     Specify whether to write PCC values to MS/MS files. Default: False
   -pr_mz_min PR_MZ_MIN           Specify the minimum m/z value of precursors. Default: 200
   -charge_min CHARGE_MIN         Specify the minimum charge of precursors. Default: 1
@@ -63,6 +68,33 @@ optional arguments for users:
 
 ### Output
 For each .mbi file, xTracer produces a corresponding .mgf DDA-like file that can be analyzed by DDA engines for identification.
+
+
+## Visualization
+xTracer provides a Streamlit-based visualization panel for inspecting the identified peptides by Sage.
+
+1. Run Sage using the `--annotate-matches` option. 
+Sage will save the peptide results to `results.sage.tsv` and the matched fragment ion results to `matched_fragments.sage.tsv` on same folder.
+2. Launch the visualization GUI via `xtracer_gui`:
+    ```bash
+    xtracer_gui "path of .mbi file" "path of .mgf file" "path of results.sage.tsv"
+    ```
+3. The interfaces of xtracer_gui are shown below:
+- XIC
+
+<img src="assets/xic.png" width="400">
+
+- XIM
+
+<img src="assets/xim.png" width="400">
+
+- Heatmap for the MS1 isotope cluster
+
+<img src="assets/heatmap.png" width="400">
+
+- MS/MS
+
+<img src="assets/spec.png" width="400">
 
 ---
 ## Troubleshooting

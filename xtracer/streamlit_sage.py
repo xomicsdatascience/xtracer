@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-
-import os
 import sys
 import streamlit as st
 import pandas as pd
@@ -9,7 +7,6 @@ import matplotlib.pyplot as plt
 
 from sdk import mbisdk
 from pathlib import Path
-from sklearn.linear_model import LinearRegression, RANSACRegressor
 from matplotlib.colors import LinearSegmentedColormap
 
 C13_DELTA = 1.0033548378
@@ -471,7 +468,7 @@ def decrement():
     st.session_state.frame_idx -= 2
 
 
-def main(fmbi, fmgf, fsage, fmatch):
+def run_xtracer_app(fmbi, fmgf, fsage, fmatch):
     init_gui()
 
     # 各种路径
@@ -619,17 +616,34 @@ def main(fmbi, fmgf, fsage, fmatch):
         plot_psm(mymgf, selected_row, is_plot_label)
 
 
-import sys
 if __name__ == "__main__":
-    fmbi = Path(sys.argv[1])
-    fmgf = Path(sys.argv[2])
-    fsage = Path(sys.argv[3])
+    import sys
+    from pathlib import Path
 
-    # fmbi = Path(r"D:\Jesse\xtracer\data_mbi3\2024-12-14 06.20.30-SSL_5_8-updated_KO.mbi")
-    # fmgf = Path(r"D:\Jesse\xtracer\data_mbi3\xix_pcc03\2024-12-14 06.20.30-SSL_5_8-updated_KO.mgf")
-    # fsage = Path(r"D:\Jesse\xtracer\data_mbi3\sage_results_pcc03\xtracer_only_5_8.tsv")
-    # fsage = Path(r"D:\Jesse\xtracer\data_mbi3\sage_results_pcc03\xtracer_all_5_8.tsv")
-    # fsage = Path(r"D:\Jesse\xtracer\data_mbi3\sage_results2\AANEAGYFNEEM.tsv")
+    is_streamlit_mode = any("streamlit" in arg for arg in sys.argv)
 
-    fmatch = Path(fsage).parent/'matched_fragments.sage.tsv'
-    main(fmbi, fmgf, fsage, fmatch)
+    if is_streamlit_mode:
+        try:
+            cli_args = sys.argv[1:]
+        except ValueError:
+            cli_args = []
+
+        if len(cli_args) >= 3:
+            fmbi, fmgf, fsage = Path(cli_args[0]), Path(cli_args[1]), Path(
+                cli_args[2])
+            fmatch = fsage.parent / "matched_fragments.sage.tsv"
+            run_xtracer_app(fmbi, fmgf, fsage, fmatch)
+        else:
+            print(
+                "/path/to/data.mbi /path/to/data.mgf /path/to/results.tsv")
+
+    else:
+        import subprocess
+        script = Path(__file__).resolve()
+        cmd = [
+            sys.executable, "-m", "streamlit", "run", str(script),
+            "--server.headless", "true",
+            "--",
+            *sys.argv[1:]
+        ]
+        subprocess.run(cmd, check=True)

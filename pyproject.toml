@@ -15,6 +15,8 @@ authors = [
 dependencies = [
   "numpy==1.26.4",
   "numba==0.61.2",
+  "pyteomics==4.7.5",
+  "streamlit==1.56.0",
 ]
 
 [tool.setuptools.dynamic]
@@ -22,6 +24,7 @@ version = {attr = "xtracer.__version__"}
 
 [project.scripts]
 xtracer = "xtracer.main:main"
+xtracer_gui = "xtracer.streamlit_sage:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
