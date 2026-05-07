@@ -107,8 +107,8 @@ def load_and_merge(fmgf, fsage, fmatch):
     df_fg['fragment_mz_calculated'] = df_fg['fragment_mz_calculated'].astype(str)
     df_fg['fragment_intensity'] = df_fg['fragment_intensity'].astype(str)
     df_fg['fragment_ordinals'] = df_fg['fragment_ordinals'].astype(str)
-    df_fg['fragment_charge'] = df_fg['fragment_charge'].astype(str)
-    df_fg['fg_anno'] = df_fg['fragment_type'] + df_fg['fragment_ordinals'] + '_' + df_fg['fragment_charge']
+    tmp = np.where(df_fg["fragment_charge"] == 1, "", np.char.multiply("+", df_fg["fragment_charge"]))
+    df_fg['fg_anno'] = df_fg['fragment_type'] + df_fg['fragment_ordinals'] + tmp
     df_fg = df_fg.groupby('psm_id', sort=False).agg(
         fg_mz=('fragment_mz_calculated', ';'.join),
         fg_anno=('fg_anno', ';'.join),
@@ -117,6 +117,8 @@ def load_and_merge(fmgf, fsage, fmatch):
     df_fg = df_fg[['psm_id', 'fg_mz', 'fg_anno', 'fg_int']]
 
     df = pd.merge(df_sage, df_fg, on="psm_id")
+    df = df.sort_values('pr_mz', ascending=True).reset_index(drop=True)
+    df = df[df["pr_mz"].duplicated(keep=False)].sort_values("pr_mz").reset_index(drop=True)
 
     cols = ['psm_id', 'scannr', 'pr_id', 'pr_mz', 'pr_rt', 'pr_at', 'fg_mz', 'fg_anno', 'fg_int']
     df = df[cols]
@@ -273,7 +275,7 @@ def get_apex_frame_idx(mbi, row):
     return frame_i
 
 
-def plot_xics(mbi, row, tol_at, tol_ppm, total_cycle, rt_shift):
+def plot_xics(mbi, row, tol_at, tol_ppm, total_cycle, rt_shift, is_plot_label):
     # 确定pr的rt最接近的frame，画ms1和ms2在该frame上的原始信号
     frames_rt = np.array(mbi.GetRetentionTimes())
     frames_level = np.array(mbi.GetFrameMSLevels())
@@ -312,7 +314,8 @@ def plot_xics(mbi, row, tol_at, tol_ppm, total_cycle, rt_shift):
     rts, xics = get_xics(mbi, frame_cidx+1, at_measure, fg_mzs, tol_at, tol_ppm, N)
     for i in range(xics.shape[0]):
         ax[1].plot(rts, xics[i], label=f'{fg_annos[i]}')
-    ax[1].legend(loc='best')
+    if is_plot_label:
+        ax[1].legend(loc='best')
     fig.supxlabel("RT (s)")
     plt.tight_layout()
 
@@ -322,7 +325,7 @@ def plot_xics(mbi, row, tol_at, tol_ppm, total_cycle, rt_shift):
         # st.pyplot(fig, width='content')
 
 
-def plot_xims(mbi, row, tol_at, tol_ppm, merge_num, rt_shift):
+def plot_xims(mbi, row, tol_at, tol_ppm, merge_num, rt_shift, is_plot_label):
     # 确定pr的rt最接近的frame，画ms1和ms2在该frame上的原始信号
     frames_rt = np.array(mbi.GetRetentionTimes())
     frames_level = np.array(mbi.GetFrameMSLevels())
@@ -361,7 +364,8 @@ def plot_xims(mbi, row, tol_at, tol_ppm, merge_num, rt_shift):
     ats, xims = get_xims(mbi, frame_cidx+1, at_measure, fg_mzs, tol_at, tol_ppm, N)
     for i in range(xims.shape[0]):
         ax[1].plot(ats, xims[i], label=fg_annos[i])
-    ax[1].legend(loc='best')
+    if is_plot_label:
+        ax[1].legend(loc='best')
     fig.supxlabel("AT (ms)")
     plt.tight_layout()
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -370,7 +374,7 @@ def plot_xims(mbi, row, tol_at, tol_ppm, merge_num, rt_shift):
         # st.pyplot(fig, width='content')
 
 
-def plot_heatmap(mbi, row, tol_at, tol_da_left, tol_da_right, rt_shift):
+def plot_heatmap(mbi, row, tol_at, tol_da_left, tol_da_right, rt_shift, is_plot_label):
     frames_rt = np.array(mbi.GetRetentionTimes())
     frames_level = np.array(mbi.GetFrameMSLevels())
 
@@ -422,7 +426,7 @@ def plot_heatmap(mbi, row, tol_at, tol_da_left, tol_da_right, rt_shift):
         # st.pyplot(fig, width='content')
 
 
-def plot_psm(mymgf, row):
+def plot_psm(mymgf, row, is_plot_label):
     # 确定pr的rt最接近的frame，画ms1和ms2在该frame上的原始信号
     scannr = row['scannr']
 
@@ -442,12 +446,13 @@ def plot_psm(mymgf, row):
     labels = [fg_anno[0] for fg_anno in fg_annos]
     for i in range(len(fg_mzs)):
         ax.vlines(fg_mzs[i], 0, fg_ints[i], color=color_dict[labels[i]], linewidth=1.5)
-        if labels[i] in ['b', 'by']:
-            ax.text(fg_mzs[i], fg_ints[i] + 20, fg_annos[i], color='blue',
-                     ha='center', va='bottom', rotation=90)
-        if labels[i] in ['y', 'by']:
-            ax.text(fg_mzs[i], fg_ints[i] + 20, fg_annos[i], color='red',
-                    ha='center', va='bottom', rotation=90)
+        if is_plot_label:
+            if labels[i] in ['b', 'by']:
+                ax.text(fg_mzs[i], fg_ints[i] + 20, fg_annos[i], color='blue',
+                         ha='center', va='bottom', rotation=90)
+            if labels[i] in ['y', 'by']:
+                ax.text(fg_mzs[i], fg_ints[i] + 20, fg_annos[i], color='red',
+                        ha='center', va='bottom', rotation=90)
     ax.set_ylim(0, max(peaks_int) * 1.2)
     ax.set_ylabel('Intensity')
     ax.set_xlabel('m/z')
@@ -471,7 +476,7 @@ def main(fmbi, fmgf, fsage, fmatch):
 
     # 各种路径
     st.sidebar.write(".MBI path:")
-    st.sidebar.write(fmgf.name)
+    st.sidebar.write(fmbi.name)
     st.sidebar.write(".MGF path:")
     st.sidebar.write(fmgf.name)
     # st.sidebar.write("Sage path:", fsage.name)
@@ -522,13 +527,16 @@ def main(fmbi, fmgf, fsage, fmatch):
         st.session_state['xic_rt_shift'] = 0
         st.session_state['xim_tol_ppm'] = 30
         st.session_state['xim_tol_at'] = 2.
+        st.session_state['xim_rt_shift'] = 0.
         st.session_state['merge_num'] = 1
         st.session_state['heat_tol_da_left'] = 1.5
         st.session_state['heat_tol_da_right'] = 3.
         st.session_state['heat_tol_at'] = 2.
+        st.session_state['heat_rt_shift'] = 0.
         st.session_state.last_selected_pr = st.session_state.selected_pr
     
     # 绘图区
+    is_plot_label = st.toggle("Label/Legend", value=True)
     if st.session_state.selected_plot == "XIC":
         tol_ppm = st.sidebar.number_input(
             "tol_ppm (ppm)", min_value=5, max_value=50,
@@ -545,12 +553,15 @@ def main(fmbi, fmgf, fsage, fmatch):
             step=2, value=13,
             key='xic_total_cycle'
         )
-        st.session_state.rt_shift = st.sidebar.number_input(
-            "rt shift", min_value=-20, max_value=20,
-            step=2, value=0,
+        rt_shift = st.sidebar.number_input(
+            "rt shift", min_value=-30, max_value=30,
+            step=3, value=0,
             key='xic_rt_shift'
         )
-        plot_xics(mbi, selected_row, tol_at, tol_ppm, total_cycle, st.session_state.rt_shift)
+        plot_xics(
+            mbi, selected_row, tol_at, tol_ppm, total_cycle,
+            rt_shift, is_plot_label
+        )
 
     if st.session_state.selected_plot == "XIM":
         tol_ppm = st.sidebar.number_input(
@@ -568,7 +579,15 @@ def main(fmbi, fmgf, fsage, fmatch):
             step=2, value=1,
             key='merge_num'
         )
-        plot_xims(mbi, selected_row, tol_at, tol_ppm, merge_num, st.session_state.rt_shift)
+        rt_shift = st.sidebar.number_input(
+            "rt shift", min_value=-30, max_value=30,
+            step=3, value=0,
+            key='xim_rt_shift'
+        )
+        plot_xims(
+            mbi, selected_row, tol_at, tol_ppm, merge_num,
+            rt_shift, is_plot_label
+        )
 
     if st.session_state.selected_plot == "Heatmap":
         tol_da_left = st.sidebar.number_input(
@@ -582,25 +601,35 @@ def main(fmbi, fmgf, fsage, fmatch):
             key='heat_tol_da_right'
         )
         tol_at = st.sidebar.number_input(
-            "tol_at (ms)", min_value=0.0, max_value=5.0,
+            "tol_at (ms)", min_value=-10.0, max_value=10.0,
             step=0.5, value=2.,
             key='heat_tol_at'
         )
-        plot_heatmap(mbi, selected_row, tol_at, tol_da_left, tol_da_right, st.session_state.rt_shift)
+        rt_shift = st.sidebar.number_input(
+            "rt shift", min_value=-30, max_value=30,
+            step=3, value=0,
+            key='heat_rt_shift'
+        )
+        plot_heatmap(
+            mbi, selected_row, tol_at, tol_da_left, tol_da_right,
+            rt_shift, is_plot_label
+        )
 
     if st.session_state.selected_plot == 'MS/MS':
-        plot_psm(mymgf, selected_row)
+        plot_psm(mymgf, selected_row, is_plot_label)
 
 
 import sys
 if __name__ == "__main__":
-    # fmbi = Path(sys.argv[1])
-    # fmgf = Path(sys.argv[2])
-    # fsage = Path(sys.argv[3])
+    fmbi = Path(sys.argv[1])
+    fmgf = Path(sys.argv[2])
+    fsage = Path(sys.argv[3])
 
-    fmbi = Path(r"D:\Jesse\xtracer\data_mbi3\2024-12-14 06.20.30-SSL_5_8-updated_KO.mbi")
-    fmgf = Path(r"D:\Jesse\xtracer\data_mbi3\xix\2024-12-14 06.20.30-SSL_5_8-updated_KO.mgf")
-    fsage = Path(r"D:\Jesse\xtracer\data_mbi3\sage_results\results.sage.tsv")
+    # fmbi = Path(r"D:\Jesse\xtracer\data_mbi3\2024-12-14 06.20.30-SSL_5_8-updated_KO.mbi")
+    # fmgf = Path(r"D:\Jesse\xtracer\data_mbi3\xix_pcc03\2024-12-14 06.20.30-SSL_5_8-updated_KO.mgf")
+    # fsage = Path(r"D:\Jesse\xtracer\data_mbi3\sage_results_pcc03\xtracer_only_5_8.tsv")
+    # fsage = Path(r"D:\Jesse\xtracer\data_mbi3\sage_results_pcc03\xtracer_all_5_8.tsv")
+    # fsage = Path(r"D:\Jesse\xtracer\data_mbi3\sage_results2\AANEAGYFNEEM.tsv")
 
     fmatch = Path(fsage).parent/'matched_fragments.sage.tsv'
     main(fmbi, fmgf, fsage, fmatch)
