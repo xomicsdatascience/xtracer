@@ -67,6 +67,20 @@ def parse_args():
                         help='Merge spectra of the same precursor across '
                              'cycles into one consensus spectrum per '
                              'precursor-charge (richer peaks, less redundancy)')
+    parser.add_argument(
+        '-consensus_rt_gap', type=float, default=5.0,
+        help='Max RT gap (seconds) between samplings merged into one '
+             'consensus spectrum; larger gaps start a new group. Default: 5.0'
+    )
+    parser.add_argument(
+        '-consensus_min_rec', type=int, default=2,
+        help='Min recurrence (cycles seen) for a peak to enter the '
+             'consensus spectrum. Default: 2'
+    )
+    parser.add_argument('-consensus_both',
+                        action='store_true',
+                        help='With -consensus, also keep per-cycle spectra; '
+                             'consensus spectra are appended alongside')
 
     # common params
     parser.add_argument(

@@ -43,8 +43,47 @@ def main(args, indir, outdir, mode):
     with open(outdir, "wb", buffering=1024*1024*50) as f:
         buffer = bytearray()
         counter = 0
-        # cross-cycle consensus: (mz, at, charge) -> merged precursor record
+        # cross-cycle consensus: (mz, charge) -> active merged group;
+        # a group closes when the RT gap between samplings exceeds
+        # args.consensus_rt_gap (guards against isobaric co-eluters)
         consensus = {}
+
+        def flush_consensus(ent):
+            nonlocal counter, buffer
+            # cluster 1 mDa accumulation buckets within 30 ppm first:
+            # fragment m/z jitters across cycles, so one ion may occupy
+            # several neighboring buckets
+            clusters = sorted(ent['frags'].values(), key=lambda p: p[0])
+            merged = []  # [anchor_mz, rep_mz, rep_h, count]
+            for m, h, c in clusters:
+                if merged and (m - merged[-1][0]) / merged[-1][0] * 1e6 <= 30.0:
+                    cl = merged[-1]
+                    cl[3] += c
+                    if h > cl[2]:
+                        cl[1], cl[2] = m, h
+                else:
+                    merged.append([m, m, h, c])
+            peaks = [(m, h) for _, m, h, c in merged
+                     if c >= args.consensus_min_rec]
+            if len(peaks) < args.tol_fg_num:
+                return
+            peaks.sort()
+            scan_mz_c = np.array([p[0] for p in peaks], dtype=np.float32)
+            scan_h_c = np.array([p[1] for p in peaks], dtype=np.float32)
+            peak_block = format_mz_int(scan_mz_c, scan_h_c) + b"END IONS\n\n"
+            common_header = (
+                f"RTINSECONDS={ent['rt']:.2f}\n"
+                f"AT={ent['at']:.2f}\n"
+                f"PEPMASS={ent['mz']:.6f} {ent['height']:.2f}\n").encode()
+            counter += 1
+            buffer.extend(
+                f"BEGIN IONS\nTITLE={counter}.{ent['charge']}\n".encode())
+            buffer.extend(common_header)
+            buffer.extend(f"CHARGE={ent['charge']}+\n".encode())
+            buffer.extend(peak_block)
+            if len(buffer) >= MGF_BUFFER_FLUSH:
+                f.write(buffer)
+                buffer.clear()
         for frame_i in range(start, len(frame_rts) - start):
             frame_rt = frame_rts[frame_i]
             if frame_levels[frame_i] != 2: # level-1 --> MS2
@@ -289,14 +328,32 @@ def main(args, indir, outdir, mode):
                     # merge into cross-cycle consensus instead of per-cycle write
                     for pr_charge in pr_charges:
                         charge_int = int(pr_charge)
-                        key = (round(float(pr_mz), 2), round(float(pr_at), 1),
-                               charge_int)
+                        key = (round(float(pr_mz), 2), charge_int)
                         ent = consensus.get(key)
+                        if (ent is not None and
+                                frame_rt - ent['rt_last'] > args.consensus_rt_gap):
+                            flush_consensus(ent)
+                            ent = None
+                            consensus.pop(key, None)
+                        if ent is None:
+                            # precursor m/z jitter (~+-10 mDa) may straddle the
+                            # 10 mDa bucket boundary: reuse a fresh neighbor
+                            # chain whose apex is within +-15 ppm
+                            for dz in (-0.01, 0.01):
+                                nk = (round(key[0] + dz, 2), charge_int)
+                                alt = consensus.get(nk)
+                                if (alt is not None
+                                        and frame_rt - alt['rt_last'] <= args.consensus_rt_gap
+                                        and abs(alt['mz'] - float(pr_mz)) / float(pr_mz) * 1e6 <= 15):
+                                    ent, key = alt, nk
+                                    break
                         if ent is None:
                             ent = {'mz': float(pr_mz), 'at': float(pr_at),
                                    'height': float(pr_height),
-                                   'rt': float(frame_rt), 'frags': {}}
+                                   'rt': float(frame_rt),
+                                   'charge': charge_int, 'frags': {}}
                             consensus[key] = ent
+                        ent['rt_last'] = float(frame_rt)
                         if pr_height > ent['height']:
                             ent['mz'] = float(pr_mz)
                             ent['at'] = float(pr_at)
@@ -306,9 +363,14 @@ def main(args, indir, outdir, mode):
                         for m, h in zip(scan_mz, scan_height):
                             b = round(float(m), 3)
                             cur = frags.get(b)
-                            if cur is None or h > cur[1]:
-                                frags[b] = (float(m), float(h))
-                    continue
+                            if cur is None:
+                                frags[b] = [float(m), float(h), 1]
+                            else:
+                                cur[2] += 1
+                                if h > cur[1]:
+                                    cur[1] = float(h)
+                    if not args.consensus_both:
+                        continue
 
                 # 不同charge也是相同scan_mz
                 if args.write_pcc:
@@ -334,26 +396,8 @@ def main(args, indir, outdir, mode):
                         f.write(buffer)
                         buffer.clear()
         if args.consensus:
-            for (mz_k, at_k, charge_int), ent in consensus.items():
-                if len(ent['frags']) < args.tol_fg_num:
-                    continue
-                peaks = sorted(ent['frags'].values())
-                scan_mz_c = np.array([p[0] for p in peaks], dtype=np.float32)
-                scan_h_c = np.array([p[1] for p in peaks], dtype=np.float32)
-                peak_block = format_mz_int(scan_mz_c, scan_h_c) + b"END IONS\n\n"
-                common_header = (
-                    f"RTINSECONDS={ent['rt']:.2f}\n"
-                    f"AT={ent['at']:.2f}\n"
-                    f"PEPMASS={ent['mz']:.6f} {ent['height']:.2f}\n").encode()
-                counter += 1
-                buffer.extend(
-                    f"BEGIN IONS\nTITLE={counter}.{charge_int}\n".encode())
-                buffer.extend(common_header)
-                buffer.extend(f"CHARGE={charge_int}+\n".encode())
-                buffer.extend(peak_block)
-                if len(buffer) >= MGF_BUFFER_FLUSH:
-                    f.write(buffer)
-                    buffer.clear()
+            for ent in consensus.values():
+                flush_consensus(ent)
         if buffer:
             f.write(buffer)
         logger.info(f'n_seed: {n_seed}, n_spectra: {counter}')
