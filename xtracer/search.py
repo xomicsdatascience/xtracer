@@ -43,6 +43,8 @@ def main(args, indir, outdir, mode):
     with open(outdir, "wb", buffering=1024*1024*50) as f:
         buffer = bytearray()
         counter = 0
+        # cross-cycle consensus: (mz, at, charge) -> merged precursor record
+        consensus = {}
         for frame_i in range(start, len(frame_rts) - start):
             frame_rt = frame_rts[frame_i]
             if frame_levels[frame_i] != 2: # level-1 --> MS2
@@ -54,8 +56,12 @@ def main(args, indir, outdir, mode):
             frame2_deque = mbi.deque_frame2
 
             # merge frames for maximum points
-            frame1_at, frame1_mz, frame1_height = merge_frames(mbi.deque_frame1, 3)
-            frame2_at, frame2_mz, frame2_height = merge_frames(mbi.deque_frame2, 3)
+            frame1_at, frame1_mz, frame1_height = merge_frames(
+                mbi.deque_frame1, 3, weighted=args.merge_weighted,
+                at_tol=args.merge_at_tol)
+            frame2_at, frame2_mz, frame2_height = merge_frames(
+                mbi.deque_frame2, 3, weighted=args.merge_weighted,
+                at_tol=args.merge_at_tol)
             check_ms(frame1_at, frame1_mz, frame1_height)
             check_ms(frame2_at, frame2_mz, frame2_height)
 
@@ -69,10 +75,12 @@ def main(args, indir, outdir, mode):
 
             # extract
             xics1, xims1 = None, None
+            frames1_list = None
             if mode in ['xic', 'xix']:
+                frames1_list = numba.typed.List(frame1_deque)
                 xics1 = get_xics(
                     frame1_at, frame1_mz, frame1_height,
-                    idx_max1, numba.typed.List(frame1_deque),
+                    idx_max1, frames1_list,
                     tol_at_area=args.tol_at_area, tol_ppm=args.tol_ppm,
                 )
             if mode in ['xim', 'xix']:
@@ -90,13 +98,21 @@ def main(args, indir, outdir, mode):
                 left_m, right_m, gaussian_m = find_isotope_cluster_xic(
                     frame1_at, frame1_mz, frame1_height,
                     idx_max1, is_apex1, xics1,
+                    frames1_list,
                     charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
+                    tol_iso_num=args.tol_iso_num,
+                    iso_int_min=args.iso_int_min,
+                    iso_int_max=args.iso_int_max,
+                    tol_ppm=args.tol_ppm,
                     tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
-                    tol_pcc=args.tol_pcc
+                    tol_pcc=args.tol_pcc,
+                    iso_rescue=args.iso_rescue,
+                    iso_rescue_pcc=args.iso_rescue_pcc,
+                    iso_rescue_gauss=args.iso_rescue_gauss
                 )
                 right_m = np.all(right_m, axis=-1)
-                state_m = get_states(left_m, right_m, gaussian_m, allow_lone=False)
+                state_m = get_states(left_m, right_m, gaussian_m,
+                                     allow_lone=args.allow_lone)
                 xics1 = xics1[is_apex1]
                 cluster_idx = state_m.any(axis=-1)
                 state_m = state_m[cluster_idx]
@@ -117,12 +133,16 @@ def main(args, indir, outdir, mode):
                     frame1_at, frame1_mz, frame1_height,
                     idx_max1, is_apex1, xims1,
                     charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
+                    tol_iso_num=args.tol_iso_num,
+                    iso_int_min=args.iso_int_min,
+                    iso_int_max=args.iso_int_max,
+                    tol_ppm=args.tol_ppm,
                     tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
                     tol_pcc=args.tol_pcc
                 )
                 right_m = np.all(right_m, axis=-1)
-                state_m = get_states(left_m, right_m, gaussian_m, allow_lone=False)
+                state_m = get_states(left_m, right_m, gaussian_m,
+                                     allow_lone=args.allow_lone)
                 xims1 = xims1[is_apex1]
                 cluster_idx = state_m.any(axis=-1)
                 state_m = state_m[cluster_idx]
@@ -135,12 +155,16 @@ def main(args, indir, outdir, mode):
                     frame1_at, frame1_mz, frame1_height,
                     idx_max1, is_apex1, xics1, xims1,
                     charge_min=args.charge_min, charge_max=args.charge_max,
-                    tol_iso_num=args.tol_iso_num, tol_ppm=args.tol_ppm,
+                    tol_iso_num=args.tol_iso_num,
+                    iso_int_min=args.iso_int_min,
+                    iso_int_max=args.iso_int_max,
+                    tol_ppm=args.tol_ppm,
                     tol_at_area=args.tol_at_area, tol_at_shift=args.tol_at_shift,
                     tol_pcc=args.tol_pcc
                 )
                 right_m = np.all(right_m, axis=-1)
-                state_m = get_states(left_m, right_m, gaussian_m, allow_lone=False)
+                state_m = get_states(left_m, right_m, gaussian_m,
+                                     allow_lone=args.allow_lone)
                 xims1, xics1 = xims1[is_apex1], xics1[is_apex1]
                 cluster_idx = state_m.any(axis=-1)
                 state_m = state_m[cluster_idx]
@@ -149,6 +173,21 @@ def main(args, indir, outdir, mode):
 
             if len(idx_cluster1) == 0:
                 continue
+
+            # apex-only: emit spectra only near the apex frame of each
+            # precursor XIC to remove cross-frame redundancy
+            if args.apex_only and mode in ('xic', 'xix'):
+                mid = across_cycle_num // 2
+                center = xics1[:, mid]
+                neighbors = np.maximum(xics1[:, mid - 1], xics1[:, mid + 1])
+                keep = center >= 0.95 * neighbors
+                idx_cluster1 = idx_cluster1[keep]
+                state_m = state_m[keep]
+                xics1 = xics1[keep]
+                if mode == 'xix':
+                    xims1 = xims1[keep]
+                if len(idx_cluster1) == 0:
+                    continue
 
             # ms2
             idx_max2 = find_local_maximum(
@@ -223,6 +262,12 @@ def main(args, indir, outdir, mode):
                 fg_num = pcc_good.sum()
                 if fg_num < args.tol_fg_num:
                     continue
+                # strong-match quality gate: spectra must contain enough
+                # well-correlated fragments, otherwise they dilute FDR
+                if args.tol_fg_num_strong > 0:
+                    fg_num_strong = (pcc_v > args.tol_pcc_strong).sum()
+                    if fg_num_strong < args.tol_fg_num_strong:
+                        continue
                 # charge
                 pr_charges = np.where(state_m[idx_col])[0] + args.charge_min
                 # pr
@@ -232,15 +277,45 @@ def main(args, indir, outdir, mode):
                 # fg
                 fg_idx = idx_max2[pcc_good]
                 scan_mz = frame2_mz[fg_idx]
-                # scan_height = frame2_height[fg_idx]
-                scan_height = max2_ints[pcc_good]
+                if args.frag_ppm_shift:
+                    scan_mz = scan_mz * (1 + args.frag_ppm_shift * 1e-6)
+                if args.xic_mid_int:
+                    scan_height = max2_ints[pcc_good]
+                else:
+                    scan_height = frame2_height[fg_idx]
                 assert len(scan_mz) == len(scan_height)
+
+                if args.consensus:
+                    # merge into cross-cycle consensus instead of per-cycle write
+                    for pr_charge in pr_charges:
+                        charge_int = int(pr_charge)
+                        key = (round(float(pr_mz), 2), round(float(pr_at), 1),
+                               charge_int)
+                        ent = consensus.get(key)
+                        if ent is None:
+                            ent = {'mz': float(pr_mz), 'at': float(pr_at),
+                                   'height': float(pr_height),
+                                   'rt': float(frame_rt), 'frags': {}}
+                            consensus[key] = ent
+                        if pr_height > ent['height']:
+                            ent['mz'] = float(pr_mz)
+                            ent['at'] = float(pr_at)
+                            ent['height'] = float(pr_height)
+                            ent['rt'] = float(frame_rt)
+                        frags = ent['frags']
+                        for m, h in zip(scan_mz, scan_height):
+                            b = round(float(m), 3)
+                            cur = frags.get(b)
+                            if cur is None or h > cur[1]:
+                                frags[b] = (float(m), float(h))
+                    continue
+
                 # 不同charge也是相同scan_mz
                 if args.write_pcc:
                     scan_pcc = pcc_v[pcc_good]
-                    peak_str = "\n".join(
+                    peak_str = ("\n".join(
                         f"{m:.6f} {h:.2f} {p:.2f}" for m, h, p in
-                        zip(scan_mz, scan_height, scan_pcc))
+                        zip(scan_mz, scan_height, scan_pcc)) + "\n").encode()
                 else:
                     # peak_str = "\n".join([f"{m:.6f} {h:.2f}" for m, h in zip(scan_mz, scan_height)])
                     peak_str = format_mz_int(scan_mz, scan_height)
@@ -258,6 +333,27 @@ def main(args, indir, outdir, mode):
                     if len(buffer) >= MGF_BUFFER_FLUSH:
                         f.write(buffer)
                         buffer.clear()
+        if args.consensus:
+            for (mz_k, at_k, charge_int), ent in consensus.items():
+                if len(ent['frags']) < args.tol_fg_num:
+                    continue
+                peaks = sorted(ent['frags'].values())
+                scan_mz_c = np.array([p[0] for p in peaks], dtype=np.float32)
+                scan_h_c = np.array([p[1] for p in peaks], dtype=np.float32)
+                peak_block = format_mz_int(scan_mz_c, scan_h_c) + b"END IONS\n\n"
+                common_header = (
+                    f"RTINSECONDS={ent['rt']:.2f}\n"
+                    f"AT={ent['at']:.2f}\n"
+                    f"PEPMASS={ent['mz']:.6f} {ent['height']:.2f}\n").encode()
+                counter += 1
+                buffer.extend(
+                    f"BEGIN IONS\nTITLE={counter}.{charge_int}\n".encode())
+                buffer.extend(common_header)
+                buffer.extend(f"CHARGE={charge_int}+\n".encode())
+                buffer.extend(peak_block)
+                if len(buffer) >= MGF_BUFFER_FLUSH:
+                    f.write(buffer)
+                    buffer.clear()
         if buffer:
             f.write(buffer)
         logger.info(f'n_seed: {n_seed}, n_spectra: {counter}')

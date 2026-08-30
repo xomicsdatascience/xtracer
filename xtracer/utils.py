@@ -69,7 +69,64 @@ def merge_frames_core(at1, mz1, h1, at2, mz2, h2, mz_tol=0.0001, at_tol=0.001):
         at_diff = abs(at1[i] - at2[j])
 
         if abs(mz_diff) <= mz_tol and at_diff <= at_tol:
-            # 加权
+            # 高强度：mz/at 取强度较高者（基线行为）
+            if h1[i] > h2[j]:
+                merged_mz[idx] = mz1[i]
+                merged_at[idx] = at1[i]
+            else:
+                merged_mz[idx] = mz2[j]
+                merged_at[idx] = at2[j]
+            merged_h[idx] = h1[i] + h2[j]
+            idx += 1
+            i += 1
+            j += 1
+        elif mz1[i] < mz2[j] - mz_tol:
+            merged_mz[idx] = mz1[i]
+            merged_at[idx] = at1[i]
+            merged_h[idx] = h1[i]
+            idx += 1
+            i += 1
+        else:
+            merged_mz[idx] = mz2[j]
+            merged_at[idx] = at2[j]
+            merged_h[idx] = h2[j]
+            idx += 1
+            j += 1
+
+    # rest points
+    while i < n1:
+        merged_mz[idx] = mz1[i]
+        merged_at[idx] = at1[i]
+        merged_h[idx] = h1[i]
+        idx += 1
+        i += 1
+    while j < n2:
+        merged_mz[idx] = mz2[j]
+        merged_at[idx] = at2[j]
+        merged_h[idx] = h2[j]
+        idx += 1
+        j += 1
+
+    return merged_at[:idx], merged_mz[:idx], merged_h[:idx]
+
+
+@jit(nopython=True)
+def merge_frames_core_weighted(at1, mz1, h1, at2, mz2, h2,
+                               mz_tol=0.0001, at_tol=0.001):
+    n1 = len(at1)
+    n2 = len(at2)
+
+    merged_at = np.empty(n1 + n2, dtype=np.float32)
+    merged_mz = np.empty(n1 + n2, dtype=np.float32)
+    merged_h = np.empty(n1 + n2, dtype=np.float32)
+
+    i = j = idx = 0
+
+    while i < n1 and j < n2:
+        mz_diff = mz1[i] - mz2[j]
+        at_diff = abs(at1[i] - at2[j])
+
+        if abs(mz_diff) <= mz_tol and at_diff <= at_tol:
             w1 = h1[i]
             w2 = h2[j]
             wsum = w1 + w2
@@ -110,12 +167,14 @@ def merge_frames_core(at1, mz1, h1, at2, mz2, h2, mz_tol=0.0001, at_tol=0.001):
 
 
 @profile
-def merge_frames(deque_frame, merge_num=None):
+def merge_frames(deque_frame, merge_num=None, weighted=False, at_tol=0.001):
     if merge_num is None:
         merge_num = len(deque_frame)
 
     assert len(deque_frame) >= merge_num
     assert merge_num % 2 == 1
+
+    core = merge_frames_core_weighted if weighted else merge_frames_core
 
     frame_num = len(deque_frame)
     center_idx = frame_num // 2
@@ -126,8 +185,8 @@ def merge_frames(deque_frame, merge_num=None):
     frame_at, frame_mz, frame_h = deque_frame[start]
     for frame_i in range(start + 1, end):
         at, mz, h = deque_frame[frame_i]
-        frame_at, frame_mz, frame_h = merge_frames_core(
-            frame_at, frame_mz, frame_h, at, mz, h
+        frame_at, frame_mz, frame_h = core(
+            frame_at, frame_mz, frame_h, at, mz, h, at_tol=at_tol
         )
     if not np.all(frame_mz[:-1] <= frame_mz[1:]):
         # 按 m/z 排序，同步重排 at 和 h
@@ -344,8 +403,10 @@ def get_xics(frame_at, frame_mz, frame_height,
 def find_isotope_cluster_xic(
         frame1_at, frame1_mz, frame1_height,
         idx_max_points, is_apex_v, xixs1,
-        charge_min, charge_max, tol_iso_num,
-        tol_at_area, tol_at_shift, tol_ppm, tol_pcc
+        frames,
+        charge_min, charge_max, tol_iso_num, iso_int_min, iso_int_max,
+        tol_at_area, tol_at_shift, tol_ppm, tol_pcc,
+        iso_rescue, iso_rescue_pcc, iso_rescue_gauss
 ):
     '''
     state_left_m是二维，因为只用看一个
@@ -417,7 +478,8 @@ def find_isotope_cluster_xic(
                     continue
                 if ii_mz > limit_mz:
                     break
-                if (ii_int > i_int) or (ii_int < 0.2 * i_int):
+                if (ii_int > iso_int_max * i_int) or (
+                        ii_int < iso_int_min * i_int):
                     continue
                 for n_neutron in range(1, tol_iso_num+1):
                     target_mz = i_mz + n_neutron * C13_DELTA / charge
@@ -429,6 +491,25 @@ def find_isotope_cluster_xic(
                         state_right_m[idx_apex, charge-charge_min, n_neutron-1] = True
                         found_right = True
                         break
+
+            # 无M-1, 无M+N：直接在理论同位素位置提取XIC救援
+            # 救援需同时满足：与种子XIC相关 + 自身呈高斯峰形，避免噪声泛滥
+            if not found_right and iso_rescue:
+                for n_neutron in range(1, tol_iso_num + 1):
+                    target_mz = i_mz + n_neutron * C13_DELTA / charge
+                    xic_iso = get_xic(
+                        frames, i_at, target_mz, tol_at_area, tol_ppm
+                    )
+                    iso_int = np.mean(xic_iso[2:5])
+                    if iso_int > iso_int_max * i_int:
+                        continue
+                    if cal_pcc(i_xix, xic_iso) <= iso_rescue_pcc:
+                        continue
+                    if cal_pcc(xic_iso, xix_gaussian) <= iso_rescue_gauss:
+                        continue
+                    state_right_m[idx_apex, charge-charge_min, n_neutron-1] = True
+                    found_right = True
+                    break
 
             # 无M-1, 无M+N
             if not found_right:
@@ -443,7 +524,7 @@ def find_isotope_cluster_xic(
 def find_isotope_cluster_xim(
         frame1_at, frame1_mz, frame1_height,
         idx_max_points, is_apex_v, xixs1,
-        charge_min, charge_max, tol_iso_num,
+        charge_min, charge_max, tol_iso_num, iso_int_min, iso_int_max,
         tol_at_area, tol_at_shift, tol_ppm, tol_pcc
 ):
     '''
@@ -519,7 +600,8 @@ def find_isotope_cluster_xim(
                     continue
                 if ii_mz > limit_mz:
                     break
-                if (ii_int > i_int) or (ii_int < 0.2 * i_int):
+                if (ii_int > iso_int_max * i_int) or (
+                        ii_int < iso_int_min * i_int):
                     continue
                 for n_neutron in range(1, tol_iso_num+1):
                     target_mz = i_mz + n_neutron * C13_DELTA / charge
@@ -545,7 +627,7 @@ def find_isotope_cluster_xim(
 def find_isotope_cluster_xix(
         frame1_at, frame1_mz, frame1_height,
         idx_max_points, is_apex_v, xics1, xims1,
-        charge_min, charge_max, tol_iso_num,
+        charge_min, charge_max, tol_iso_num, iso_int_min, iso_int_max,
         tol_at_area, tol_at_shift, tol_ppm, tol_pcc
 ):
     '''
@@ -630,7 +712,8 @@ def find_isotope_cluster_xix(
                     continue
                 if ii_mz > limit_mz:
                     break
-                if (ii_int > i_int) or (ii_int < 0.2 * i_int):
+                if (ii_int > iso_int_max * i_int) or (
+                        ii_int < iso_int_min * i_int):
                     continue
                 for n_neutron in range(1, tol_iso_num + 1):
                     target_mz = i_mz + n_neutron * C13_DELTA / charge
@@ -659,7 +742,7 @@ def find_isotope_cluster_xix(
 def get_states(state_left_m, state_right_m, state_lone_m, allow_lone):
     '''
     单电荷规则: 左无右有，则该电荷有；其他则该电荷无
-    跨电荷规则：左无右无，gaussian有，则全电荷有
+    跨电荷规则：左无右无，gaussian有，则报最低电荷（控制出谱规模）
     '''
     # Step 1: 单电荷规则
     final_m = (~state_left_m) & state_right_m

@@ -26,6 +26,47 @@ def parse_args():
     parser.add_argument('-write_pcc',
                         action='store_true',
                         help='Write PCC values or not')
+    parser.add_argument('-xic_mid_int',
+                        action='store_true',
+                        help='Use XIC center-frame intensity for fragment '
+                             'peaks instead of merged-frame point height')
+    parser.add_argument('-merge_weighted',
+                        action='store_true',
+                        help='Intensity-weighted average when merging '
+                             'frames (default: take mz/at of the stronger '
+                             'point)')
+    parser.add_argument(
+        '-merge_at_tol', type=float, default=0.001,
+        help='Arrival-time tolerance in ms when merging coincident points '
+             'across frames. Default: 0.001'
+    )
+    parser.add_argument('-allow_lone',
+                        action='store_true',
+                        help='Allow precursors without visible isotopes '
+                             '(Gaussian-shaped XIC/XIM rescue)')
+    parser.add_argument('-apex_only',
+                        action='store_true',
+                        help='Emit spectra only at the apex frame of each '
+                             'precursor XIC (removes cross-frame redundancy)')
+    parser.add_argument('-iso_rescue',
+                        action='store_true',
+                        help='Rescue precursors whose M+1 isotope is not a '
+                             'local-maximum seed by extracting an XIC '
+                             'directly at the theoretical isotope m/z')
+    parser.add_argument(
+        '-iso_rescue_pcc', type=float, default=0.3,
+        help='Min PCC between seed XIC and rescued isotope XIC. Default: 0.3'
+    )
+    parser.add_argument(
+        '-iso_rescue_gauss', type=float, default=0.6,
+        help='Min PCC of rescued isotope XIC against Gaussian shape. '
+             'Default: 0.6'
+    )
+    parser.add_argument('-consensus',
+                        action='store_true',
+                        help='Merge spectra of the same precursor across '
+                             'cycles into one consensus spectrum per '
+                             'precursor-charge (richer peaks, less redundancy)')
 
     # common params
     parser.add_argument(
@@ -65,6 +106,16 @@ def parse_args():
              'Default: 1, i.e. M, M+1'
     )
     parser.add_argument(
+        '-iso_int_max', type=float, default=1.0,
+        help='Specify the max intensity ratio of M+N relative to M when '
+             'validating isotope clusters. Default: 1.0'
+    )
+    parser.add_argument(
+        '-iso_int_min', type=float, default=0.0,
+        help='Specify the min intensity ratio of M+N relative to M when '
+             'validating isotope clusters. Default: 0.0 (no lower bound)'
+    )
+    parser.add_argument(
         '-tol_pcc', type=float, default=0.3,
         help='Specify the PCC tolerance when two signal are related. Default: 0.3'
     )
@@ -82,6 +133,21 @@ def parse_args():
         '-tol_fg_num', type=int, default=10,
         help='Specify the fragment ions num tolerance that a spectrum should '
              'have. Default: 10'
+    )
+    parser.add_argument(
+        '-tol_pcc_strong', type=float, default=0.6,
+        help='PCC threshold defining a strongly-correlated fragment match. '
+             'Default: 0.6'
+    )
+    parser.add_argument(
+        '-tol_fg_num_strong', type=int, default=0,
+        help='Require at least this many strong (PCC>tol_pcc_strong) fragment '
+             'matches per spectrum; 0 disables the gate. Default: 0'
+    )
+    parser.add_argument(
+        '-frag_ppm_shift', type=float, default=0.0,
+        help='Shift fragment m/z by this ppm when writing spectra, to '
+             'compensate systematic frame2 mass bias. Default: 0.0'
     )
 
     # for xim
