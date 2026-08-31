@@ -16,13 +16,6 @@ def parse_args():
         help='Specify the folder name that contains .mgf files.'
     )
 
-    # optional
-    mode_group = parser.add_mutually_exclusive_group(required=True)
-    mode_group.add_argument('-xic', action='store_true', help='XIC-based PCC')
-    mode_group.add_argument('-xim', action='store_true', help='XIM-based PCC')
-    mode_group.add_argument(
-        '-xix', action='store_true', help='XIC+XIM averaged PCC'
-    )
     parser.add_argument('-write_pcc',
                         action='store_true',
                         help='Write PCC values or not')
@@ -41,10 +34,6 @@ def parse_args():
         help='Specify the maximum charge of precursors. Default: 4'
     )
     parser.add_argument(
-        '-at_min', type=float, default=100,
-        help='Specify the minimum at value of signals. Default: 100'
-    )
-    parser.add_argument(
         '-tol_at_area', type=float, default=2.0,
         help='Specify the millisecond tolerance of signal in at dimension. '
              'Default: 2.0'
@@ -55,39 +44,28 @@ def parse_args():
              'related. Default: 1.0'
     )
     parser.add_argument(
-        '-tol_ppm', type=float, default=15,
+        '-tol_ppm', type=float, default=30,
         help='Specify the ppm tolerance of signal in m/z dimension. '
-             'Default: 15'
+             'Default: 30'
     )
     parser.add_argument(
-        '-tol_iso_num', type=int, default=1,
+        '-tol_iso_num', type=int, default=2,
         help='Specify how many isotopes should have to be a precursor. '
-             'Default: 1, i.e. M, M+1'
+             'Default: 2, i.e. M, M+1, M+2'
     )
     parser.add_argument(
-        '-tol_pcc', type=float, default=0.35,
-        help='Specify the PCC tolerance when two signal are related. Default: 0.35'
+        '-tol_pcc', type=float, default=0.4,
+        help='Specify the PCC tolerance when two signal are related. Default: 0.4'
     )
     parser.add_argument(
-        '-tol_neighbor1_num', type=int, default=5,
-        help='Specify the neighbor num tolerance that a MS1 signal should have. '
+        '-tol_point_num', type=int, default=5,
+        help='Specify the point num tolerance that a signal should have. '
              'Default: 5'
-    )
-    parser.add_argument(
-        '-tol_neighbor2_num', type=int, default=3,
-        help='Specify the neighbor num tolerance that a MS2 signal should have. '
-             'Default: 3'
     )
     parser.add_argument(
         '-tol_fg_num', type=int, default=10,
         help='Specify the fragment ions num tolerance that a spectrum should '
              'have. Default: 10'
-    )
-
-    # for xim
-    parser.add_argument(
-        '-xim_across_cycle_num', type=int, default=3,
-        help='Specify the odd XIM cycle span when summing frames. Default: 3'
     )
 
     # for xic
@@ -105,9 +83,6 @@ def parse_args():
 def main():
     args = parse_args()
 
-    MODE_MAP = {"xic": args.xic, "xim": args.xim, "xix": args.xix}
-    run_mode = [k for k, v in MODE_MAP.items() if v][0]
-
     fin_v = list(Path(args.ws_in).glob('*.mbi'))
 
     outdir = args.ws_in / args.out_name
@@ -117,9 +92,9 @@ def main():
     logger.info('xTracer, for SLIM with high resolution ion mobility')
     logger.info(vars(args))
     for fi, fin in enumerate(fin_v):
-        logger.info(f'Processing {fi+1}/{len(fin_v)} in {run_mode} mode')
+        logger.info(f'Processing {fi+1}/{len(fin_v)}')
         fout = outdir / (fin.stem + '.mgf')
-        search.main(args, fin, fout, run_mode)
+        search.main(args, fin, fout)
 
 
 if __name__ == '__main__':
