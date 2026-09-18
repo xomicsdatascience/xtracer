@@ -29,6 +29,3 @@ xtracer = "xtracer.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["xtracer*"]
-
-[tool.setuptools.package-data]
-xtracer = ["assets/bruker_tdf_template/analysis.tdf"]
