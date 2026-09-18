@@ -1,11 +1,10 @@
 """Convert one PAMAF .mbi file to a single-window Bruker TDF .d dataset."""
 import argparse
-import hashlib
 import shutil
 import sqlite3
 import sys
 import time
-from importlib.resources import files
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -23,9 +22,47 @@ TIMS_CALIBRATION = (1.0, 917.0, 226.031615206, 59.7363722417, 27.7995150765, 1.0
 
 
 
-def _template_path():
-    return Path(files('xtracer').joinpath('assets', 'bruker_tdf_template', 'analysis.tdf'))
+FRAME_COLUMNS = ('Id', 'Time', 'Polarity', 'ScanMode', 'MsMsType', 'TimsId',
+                 'MaxIntensity', 'SummedIntensities', 'NumScans', 'NumPeaks',
+                 'MzCalibration', 'T1', 'T2', 'TimsCalibration', 'PropertyGroup',
+                 'AccumulationTime', 'RampTime')
 
+
+def _create_tdf(tdf_path, input_name):
+    """Create a self-contained, minimal TDF SQLite database."""
+    db = sqlite3.connect(tdf_path)
+    db.executescript("""
+        PRAGMA page_size=4096;
+        CREATE TABLE DiaFrameMsMsInfo (Frame INTEGER PRIMARY KEY, WindowGroup INTEGER NOT NULL);
+        CREATE TABLE DiaFrameMsMsWindowGroups (Id INTEGER PRIMARY KEY);
+        CREATE TABLE DiaFrameMsMsWindows (WindowGroup INTEGER NOT NULL, ScanNumBegin INTEGER NOT NULL, ScanNumEnd INTEGER NOT NULL, IsolationMz REAL NOT NULL, IsolationWidth REAL NOT NULL, CollisionEnergy REAL NOT NULL, PRIMARY KEY (WindowGroup, ScanNumBegin)) WITHOUT ROWID;
+        CREATE TABLE Frames (Id INTEGER PRIMARY KEY, Time REAL NOT NULL, Polarity TEXT NOT NULL, ScanMode INTEGER NOT NULL, MsMsType INTEGER NOT NULL, TimsId INTEGER NOT NULL, MaxIntensity INTEGER NOT NULL, SummedIntensities INTEGER NOT NULL, NumScans INTEGER NOT NULL, NumPeaks INTEGER NOT NULL, MzCalibration INTEGER NOT NULL, T1 REAL NOT NULL, T2 REAL NOT NULL, TimsCalibration INTEGER NOT NULL, PropertyGroup INTEGER, AccumulationTime REAL NOT NULL, RampTime REAL NOT NULL);
+        CREATE UNIQUE INDEX FramesTimeIndex ON Frames(Time);
+        CREATE TABLE GlobalMetadata (Key TEXT PRIMARY KEY, Value TEXT NOT NULL);
+        CREATE TABLE MzCalibration (Id INTEGER PRIMARY KEY, ModelType INTEGER NOT NULL, DigitizerTimebase REAL NOT NULL, DigitizerDelay REAL NOT NULL, T1 REAL NOT NULL, T2 REAL NOT NULL, dC1 REAL NOT NULL, dC2 REAL NOT NULL, C0 REAL NOT NULL, C1 REAL NOT NULL, C2 REAL NOT NULL, C3 REAL NOT NULL, C4 REAL NOT NULL);
+        CREATE TABLE Segments (Id INTEGER PRIMARY KEY, FirstFrame INTEGER NOT NULL, LastFrame INTEGER NOT NULL, IsCalibrationSegment INTEGER NOT NULL);
+        CREATE TABLE TimsCalibration (Id INTEGER PRIMARY KEY, ModelType INTEGER NOT NULL, C0 REAL NOT NULL, C1 REAL NOT NULL, C2 REAL NOT NULL, C3 REAL NOT NULL, C4 REAL NOT NULL, C5 REAL NOT NULL, C6 REAL NOT NULL, C7 REAL NOT NULL, C8 REAL NOT NULL, C9 REAL NOT NULL);
+    """)
+    metadata = [
+        ('SchemaType', 'TDF'), ('SchemaVersionMajor', '3'), ('SchemaVersionMinor', '4'),
+        ('ClosedProperly', '1'), ('TimsCompressionType', '2'), ('MaxNumPeaksPerScan', '0'),
+        ('AnalysisId', str(uuid.uuid4())), ('DigitizerNumSamples', str(TIMS_MAX_TOF)),
+        ('MzAcqRangeLower', '100.0'), ('MzAcqRangeUpper', '1700.0'),
+        ('AcquisitionSoftwareVendor', 'xTracer'), ('AcquisitionSoftware', 'xTracer'),
+        ('AcquisitionSoftwareVersion', PROFILE), ('InstrumentVendor', 'PAMAF'),
+        ('InstrumentName', 'PAMAF synthetic TDF'),
+        ('Description', 'Synthetic TDF-compatible representation generated from MBI.'),
+        ('SampleName', input_name), ('PeakListIndexScaleFactor', '1'),
+        ('OneOverK0AcqRangeLower', '0.5'), ('OneOverK0AcqRangeUpper', '1.78'),
+    ]
+    db.executemany('INSERT INTO GlobalMetadata(Key, Value) VALUES (?, ?)', metadata)
+    db.execute('INSERT INTO MzCalibration VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+               (1, 1, MZ_TIMEBASE, MZ_DELAY, 0.0, 0.0, 0.0, 0.0,
+                MZ_C0, MZ_C1, 0.0, 0.0, 0.0))
+    db.execute('INSERT INTO TimsCalibration VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+               (1, 2, *TIMS_CALIBRATION))
+    db.execute('INSERT INTO Segments VALUES (1, 1, 1, 0)')
+    return db
 
 def _encode_type2(counts, tofs, intensities):
     """Encode one TDF compression-type-2 record without per-peak Python loops."""
@@ -63,31 +100,12 @@ def _map_frame(arrival_times, mzs, intensities):
     return tofs, intensities, np.bincount(scans, minlength=NUM_SCANS).astype(np.uint32)
 
 
-def _prepare_tdf(tdf_path, input_name, output_frame_count):
-    db = sqlite3.connect(tdf_path)
-    db.row_factory = sqlite3.Row
-    templates = {kind: db.execute('SELECT * FROM Frames WHERE Id=?', (frame,)).fetchone() for kind, frame in [('ms1', 1), ('ms2', 2)]}
-    if not all(templates.values()):
-        db.close()
-        raise RuntimeError('Bundled Bruker TDF template is missing frame templates.')
-    props = {kind: db.execute('SELECT Property, Value FROM FrameProperties WHERE Frame=?', (frame,)).fetchall() for kind, frame in [('ms1', 1), ('ms2', 2)]}
-    template_property_frames = db.execute('SELECT MAX(Frame) FROM FrameProperties').fetchone()[0] or 0
-    columns = [row[1] for row in db.execute('PRAGMA table_info(Frames)')]
-    for table in ('DiaFrameMsMsInfo', 'DiaFrameMsMsWindows', 'DiaFrameMsMsWindowGroups', 'FrameMsMsInfo', 'PrmFrameMeasurementMode', 'PrmFrameMsMsInfo', 'ErrorLog', 'Frames'):
-        db.execute(f'DELETE FROM {table}')
-    db.execute('DELETE FROM FrameProperties WHERE Frame > ?', (output_frame_count,))
-    db.execute('UPDATE Segments SET FirstFrame=1, LastFrame=1')
-    db.execute('UPDATE MzCalibration SET T1=0,T2=0,dC1=0,dC2=0,C2=0,C3=0,C4=0')
-    db.execute('UPDATE TimsCalibration SET ' + ','.join(f'C{i}=?' for i in range(10)) + ' WHERE Id=1', TIMS_CALIBRATION)
-    db.executemany('UPDATE GlobalMetadata SET Value=? WHERE Key=?', [('0.5', 'OneOverK0AcqRangeLower'), ('1.78', 'OneOverK0AcqRangeUpper')])
-    return db, columns, {k: dict(v) for k, v in templates.items()}, props, template_property_frames
-
-
-def _insert_frame(db, columns, template, frame_id, rt, msms_type, tims_id, peak_count, max_intensity, summed_intensities):
-    row = dict(template)
-    row.update(Id=frame_id, Time=float(rt), MsMsType=msms_type, TimsId=int(tims_id), NumPeaks=int(peak_count), MaxIntensity=int(max_intensity), SummedIntensities=int(summed_intensities), NumScans=NUM_SCANS)
-    db.execute(f'INSERT INTO Frames ({",".join(columns)}) VALUES ({",".join("?" for _ in columns)})', tuple(row[column] for column in columns))
-
+def _insert_frame(db, frame_id, rt, msms_type, tims_id, peak_count, max_intensity, summed_intensities):
+    values = (frame_id, float(rt), '+', 9, msms_type, int(tims_id),
+              int(max_intensity), int(summed_intensities), NUM_SCANS,
+              int(peak_count), 1, 25.617137181405713, 26.549323743070385,
+              1, None, 99.953, 99.953)
+    db.execute(f'INSERT INTO Frames ({",".join(FRAME_COLUMNS)}) VALUES ({",".join("?" for _ in FRAME_COLUMNS)})', values)
 
 def _format_seconds(seconds):
     seconds = max(0, int(seconds))
@@ -97,7 +115,6 @@ def _format_seconds(seconds):
 def _convert(input_mbi, output, logger):
     from xtracer.mbi import MBIReader
     output.mkdir(parents=True)
-    shutil.copyfile(_template_path(), output / 'analysis.tdf')
     reader = MBIReader(input_mbi, 2)
     levels = np.asarray(reader.GetFrameMSLevels(), dtype=np.int64)
     rts = np.asarray(reader.GetRetentionTimes(), dtype=np.float64)
@@ -107,9 +124,9 @@ def _convert(input_mbi, output, logger):
     unsupported = sorted(set(levels) - set(LEVEL_MSMSTYPE))
     if unsupported:
         raise RuntimeError(f'Unsupported MBI MS levels: {unsupported}')
-    db, columns, templates, props, template_property_frames = _prepare_tdf(
-        output / 'analysis.tdf', input_mbi.name, len(levels))
+    db = _create_tdf(output / 'analysis.tdf', input_mbi.name)
     ms1 = ms2 = total_peaks = 0
+    max_peaks_per_scan = 0
     read_seconds = map_seconds = encode_seconds = write_seconds = 0.0
     started = time.perf_counter()
     try:
@@ -129,13 +146,10 @@ def _convert(input_mbi, output, logger):
                 binary.seek(offset)
                 binary.write(record)
                 msms_type = LEVEL_MSMSTYPE[int(level)]
-                kind = 'ms2' if msms_type == 9 else 'ms1'
-                _insert_frame(db, columns, templates[kind], output_id, rt, msms_type, offset,
+                _insert_frame(db, output_id, rt, msms_type, offset,
                               len(tofs), int(encoded.max()) if encoded.size else 0,
                               int(encoded.sum(dtype=np.uint64)))
-                if output_id > template_property_frames:
-                    db.executemany('INSERT INTO FrameProperties(Frame, Property, Value) VALUES (?,?,?)',
-                                   [(output_id, item['Property'], item['Value']) for item in props[kind]])
+                max_peaks_per_scan = max(max_peaks_per_scan, int(counts.max()))
                 if msms_type == 9:
                     db.execute('INSERT INTO DiaFrameMsMsInfo(Frame, WindowGroup) VALUES (?,1)', (output_id,))
                     ms2 += 1
@@ -156,6 +170,8 @@ def _convert(input_mbi, output, logger):
         db.execute('INSERT INTO DiaFrameMsMsWindowGroups(Id) VALUES (1)')
         db.execute('INSERT INTO DiaFrameMsMsWindows(WindowGroup, ScanNumBegin, ScanNumEnd, IsolationMz, IsolationWidth, CollisionEnergy) VALUES (1,0,918,900.0,1610.0,35.0)')
         db.execute('UPDATE Segments SET FirstFrame=1, LastFrame=?', (len(levels),))
+        db.execute("UPDATE GlobalMetadata SET Value=? WHERE Key='MaxNumPeaksPerScan'",
+                   (str(max_peaks_per_scan),))
         db.commit()
     finally:
         db.close()
@@ -219,7 +235,7 @@ def main(argv=None):
                   'synthetic_ion_mobility': True, 'num_scans': NUM_SCANS,
                   'scan_mapping': 'scan = round(917 - 917/400 * AT_ms)',
                   'one_over_k0_mapping': '1/K0 = 0.5 + 0.0032 * AT_ms',
-                  'tof_mapping': 'quadratic template calibration', 'tof_max_index': TIMS_MAX_TOF,
+                  'tof_mapping': 'quadratic TDF calibration', 'tof_max_index': TIMS_MAX_TOF,
                   'binary_record_format': 'type_2', 'binary_compression': 'zstd_level_1',
                   'binary_alignment_bytes': ALIGNMENT, 'dia_window': [0, 918, 900.0, 1610.0, 35.0]}
     Logger.set_logger(output_root, run_name='xtracer_convert',
