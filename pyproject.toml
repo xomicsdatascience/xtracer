@@ -17,6 +17,7 @@ dependencies = [
   "numba==0.61.2",
   "pyteomics==4.7.5",
   "streamlit==1.56.0",
+  "pyzstd==0.19.1",
 ]
 
 [tool.setuptools.dynamic]
@@ -24,8 +25,10 @@ version = {attr = "xtracer.__version__"}
 
 [project.scripts]
 xtracer = "xtracer.main:main"
-xtracer_gui = "xtracer.streamlit_sage:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["xtracer*"]
+
+[tool.setuptools.package-data]
+xtracer = ["assets/bruker_tdf_template/analysis.tdf"]

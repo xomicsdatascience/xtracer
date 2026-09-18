@@ -41,7 +41,7 @@ We recommend using [Conda](https://www.anaconda.com/) to create a Python environ
 ```bash
 xtracer -ws_in "the folder that contains .mbi files" -xix
 ```
-All params are list below by entering `xtracer -h`:
+The pseudo-spectrum command writes a timestamped run log with the effective parameters to its output directory. All parameters are listed by `xtracer -h`:
 ```
 optional arguments for users:
   -h, --help                     Show this help message and exit.
@@ -52,15 +52,16 @@ optional arguments for users:
   -xix                           Using XIM + XIC method to calculate PCC
   -write_pcc                     Specify whether to write PCC values to MS/MS files. Default: False
   -pr_mz_min PR_MZ_MIN           Specify the minimum m/z value of precursors. Default: 200
-  -charge_min CHARGE_MIN         Specify the minimum charge of precursors. Default: 1
+  -charge_min CHARGE_MIN         Specify the minimum charge of precursors. Default: 2
   -charge_max CHARGE_MAX         Specify the maximum charge of precursors. Default: 4
-  -at_min AT_MIN                 Specify the minimum arrival time (at) value of signals. Default: 90 ms
+  -at_min AT_MIN                 Specify the minimum arrival time (at) value of signals. Default: 100 ms
   -tol_at_area TOL_AT_AREA       Specify the millisecond tolerance of signal in at dimension. Default: 2.0
   -tol_at_shift TOL_AT_SHIFT     Specify the millisecond tolerance when considering signal related. Default: 1
   -tol_ppm TOL_PPM               Specify the ppm tolerance of signal in m/z dimension. Default: 30
   -tol_iso_num TOL_ISO_NUM       Specify how many isotopes should have to be a precursor. Default: 2, i.e. M, M+1H, M+2H
-  -tol_pcc TOL_PCC               Specify the PCC tolerance when two signal are related. Default: 0.4
-  -tol_point_num TOL_POINT_NUM   Specify the point num tolerance that a signal should have. Default: 5
+  -tol_pcc TOL_PCC               Specify the PCC tolerance when two signal are related. Default: 0.3
+  -tol_neighbor1_num TOL_NEIGHBOR1_NUM  MS1 local-neighbor threshold. Default: 5
+  -tol_neighbor2_num TOL_NEIGHBOR2_NUM  MS2 local-neighbor threshold. Default: 3
   -tol_fg_num TOL_FG_NUM         Specify the fragment ions num tolerance that a spectrum should have. Default: 10
   -xim_across_cycle_num          Specify the odd XIM cycle span when summing frames. Default: 3
   -xic_across_cycle_num          Specify the odd XIC cycle span when extracting XIC. Default: 7
@@ -68,6 +69,15 @@ optional arguments for users:
 
 ### Output
 For each .mbi file, xTracer produces a corresponding .mgf DDA-like file that can be analyzed by DDA engines for identification.
+## Convert PAMAF `.mbi` to `.d`
+
+```powershell
+xtracer convert sample.mbi
+xtracer convert sample.mbi -o D:\results\sample.d
+xtracer convert sample.mbi --force
+```
+
+The converter creates a single-window Bruker TDF `.d` representation for DIA-NN or diaTracer. It uses a synthetic ion-mobility coordinate derived from PAMAF arrival time; it is not a physically calibrated timsTOF acquisition. Existing output directories are never changed unless `--force` is provided.
 
 
 ## Visualization
@@ -75,11 +85,11 @@ xTracer provides a Streamlit-based visualization panel for inspecting the identi
 
 1. Run Sage using the `--annotate-matches` option. 
 Sage will save the peptide results to `results.sage.tsv` and the matched fragment ion results to `matched_fragments.sage.tsv` on same folder.
-2. Launch the visualization GUI via `xtracer_gui`:
+2. Launch the visualization GUI via `xtracer gui`:
     ```bash
-    xtracer_gui "path of .mbi file" "path of .mgf file" "path of results.sage.tsv"
+    xtracer gui --mbi "path of .mbi file" --mgf "path of .mgf file" --sage-results "path of results.sage.tsv" --out-dir "path of gui logs"
     ```
-3. The interfaces of xtracer_gui are shown below:
+3. The interfaces of xtracer gui are shown below:
 - XIC
 
 <img src="assets/xic.png" width="400">

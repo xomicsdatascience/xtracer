@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sdk import mbisdk
+from xtracer.sdk import mbisdk
 from pathlib import Path
 from matplotlib.colors import LinearSegmentedColormap
 
@@ -617,33 +617,14 @@ def run_xtracer_app(fmbi, fmgf, fsage, fmatch):
 
 
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-
-    is_streamlit_mode = any("streamlit" in arg for arg in sys.argv)
-
-    if is_streamlit_mode:
-        try:
-            cli_args = sys.argv[1:]
-        except ValueError:
-            cli_args = []
-
-        if len(cli_args) >= 3:
-            fmbi, fmgf, fsage = Path(cli_args[0]), Path(cli_args[1]), Path(
-                cli_args[2])
-            fmatch = fsage.parent / "matched_fragments.sage.tsv"
-            run_xtracer_app(fmbi, fmgf, fsage, fmatch)
-        else:
-            print(
-                "/path/to/data.mbi /path/to/data.mgf /path/to/results.tsv")
-
-    else:
-        import subprocess
-        script = Path(__file__).resolve()
-        cmd = [
-            sys.executable, "-m", "streamlit", "run", str(script),
-            "--server.headless", "true",
-            "--",
-            *sys.argv[1:]
-        ]
-        subprocess.run(cmd, check=True)
+    cli_args = sys.argv[1:]
+    if len(cli_args) not in (3, 4):
+        raise SystemExit(
+            'Expected: <input.mbi> <input.mgf> <results.sage.tsv> '
+            '[matched_fragments.sage.tsv]'
+        )
+    fmbi, fmgf, fsage = map(Path, cli_args[:3])
+    fmatch = Path(cli_args[3]) if len(cli_args) == 4 else (
+        fsage.parent / 'matched_fragments.sage.tsv'
+    )
+    run_xtracer_app(fmbi, fmgf, fsage, fmatch)

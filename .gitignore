@@ -11,6 +11,7 @@ xtracer/sdk/MBI_SDK.dll
 xtracer/sdk/mbisdk.py
 
 data/
+data_*/
 docs/
 lib/
 paper/
