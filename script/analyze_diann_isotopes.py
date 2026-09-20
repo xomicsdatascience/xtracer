@@ -14,13 +14,21 @@ import sys
 
 import numpy as np
 import pandas as pd
+from numba.typed import List as NumbaList
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from xtracer.mbi import MBIReader
-from xtracer.utils import C13_DELTA, find_local_maximum, merge_frames
+from xtracer.utils import (
+    C13_DELTA,
+    cal_pcc,
+    find_local_maximum,
+    get_xics,
+    get_xims,
+    merge_frames,
+)
 
 
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data_mbi1" / "amount"
@@ -66,6 +74,13 @@ def parse_args() -> argparse.Namespace:
         help="Odd number of adjacent MS1 frames to merge.",
     )
     parser.add_argument(
+        "--xic-ms1",
+        type=int,
+        default=7,
+        help="Odd number of adjacent MS1 frames used for isotope XIC PCC.",
+    )
+    parser.add_argument("--pcc-threshold", type=float, default=0.3)
+    parser.add_argument(
         "--neighbor-points",
         type=int,
         default=5,
@@ -79,6 +94,10 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.merge_ms1 < 1 or args.merge_ms1 % 2 != 1:
         parser.error("--merge-ms1 must be a positive odd integer")
+    if args.xic_ms1 < args.merge_ms1 or args.xic_ms1 % 2 != 1:
+        parser.error("--xic-ms1 must be odd and at least --merge-ms1")
+    if args.pcc_threshold < -1 or args.pcc_threshold > 1:
+        parser.error("--pcc-threshold must be between -1 and 1")
     if args.ppm <= 0 or args.at_tolerance <= 0:
         parser.error("--ppm and --at-tolerance must be positive")
     return args
@@ -112,7 +131,7 @@ def match_peak(
     target_mz: float,
     ppm: float,
     at_tolerance: float,
-) -> tuple[bool, float, float, float]:
+) -> tuple[bool, float, float, float, int]:
     """Select the most intense local maximum inside the AT/mass window."""
     ppm_errors = 1e6 * (mzs - target_mz) / target_mz
     mask = (np.abs(ppm_errors) <= ppm) & (
@@ -120,13 +139,14 @@ def match_peak(
     )
     candidates = np.flatnonzero(mask)
     if candidates.size == 0:
-        return False, 0.0, np.nan, np.nan
+        return False, 0.0, np.nan, np.nan, -1
     selected = candidates[np.argmax(intensities[candidates])]
     return (
         True,
         float(intensities[selected]),
         float(ppm_errors[selected]),
         float(ats[selected] - target_at),
+        int(selected),
     )
 
 
@@ -154,11 +174,13 @@ def analyze_run(
     rows: pd.DataFrame,
     mbi_path: Path,
     merge_ms1: int,
+    xic_ms1: int,
+    pcc_threshold: float,
     ppm: float,
     at_tolerance: float,
     neighbor_points: int,
 ) -> pd.DataFrame:
-    reader = MBIReader(mbi_path, merge_ms1)
+    reader = MBIReader(mbi_path, xic_ms1)
     try:
         frame_levels = np.asarray(reader.GetFrameMSLevels(), dtype=np.int64)
         frame_rts = np.asarray(reader.GetRetentionTimes(), dtype=np.float64)
@@ -177,19 +199,26 @@ def analyze_run(
         frame_cache: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         grouped = rows.groupby("_center_position", sort=True)
         for group_number, (center_position, group) in enumerate(grouped, start=1):
-            positions = centered_window(
+            merge_positions = centered_window(
                 len(ms1_frame_ids), int(center_position), merge_ms1
             )
-            selected_frame_ids = ms1_frame_ids[positions]
-            selected_ids = {int(frame_id) for frame_id in selected_frame_ids}
+            xic_positions = centered_window(
+                len(ms1_frame_ids), int(center_position), xic_ms1
+            )
+            selected_frame_ids = ms1_frame_ids[merge_positions]
+            xic_frame_ids = ms1_frame_ids[xic_positions]
+            selected_ids = {int(frame_id) for frame_id in xic_frame_ids}
             for frame_id in tuple(frame_cache):
                 if frame_id not in selected_ids:
                     del frame_cache[frame_id]
-            for frame_id in selected_frame_ids:
+            for frame_id in xic_frame_ids:
                 frame_id = int(frame_id)
                 if frame_id not in frame_cache:
                     frame_cache[frame_id] = reader.get_frame_data(frame_id)
             spectra = deque(frame_cache[int(frame_id)] for frame_id in selected_frame_ids)
+            xic_spectra = NumbaList(
+                [frame_cache[int(frame_id)] for frame_id in xic_frame_ids]
+            )
             merged_at, merged_mz, merged_intensity = merge_frames(
                 spectra, merge_ms1
             )
@@ -206,6 +235,23 @@ def analyze_run(
             peak_at = merged_at[local_indices]
             peak_mz = merged_mz[local_indices]
             peak_intensity = merged_intensity[local_indices]
+            peak_xics = get_xics(
+                merged_at,
+                merged_mz,
+                merged_intensity,
+                local_indices,
+                xic_spectra,
+                tol_at_area=at_tolerance,
+                tol_ppm=ppm,
+            )
+            peak_xims = get_xims(
+                merged_at,
+                merged_mz,
+                merged_intensity,
+                local_indices,
+                tol_at_area=at_tolerance,
+                tol_ppm=ppm,
+            )
             center_frame_id = int(ms1_frame_ids[int(center_position)])
             center_rt = float(frame_rts[center_frame_id])
 
@@ -230,8 +276,28 @@ def analyze_run(
                     )
                     for target_mz in target_mzs
                 ]
-                found = [match[0] for match in matches]
+                peak_found = [match[0] for match in matches]
                 intensity = [match[1] for match in matches]
+                selected = [match[4] for match in matches]
+                pcc_xic = [np.nan, np.nan, np.nan]
+                pcc_xim = [np.nan, np.nan, np.nan]
+                pcc = [np.nan, np.nan, np.nan]
+                if peak_found[0]:
+                    for isotope in (1, 2):
+                        if not peak_found[isotope]:
+                            continue
+                        pcc_xic[isotope] = float(
+                            cal_pcc(peak_xics[selected[0]], peak_xics[selected[isotope]])
+                        )
+                        pcc_xim[isotope] = float(
+                            cal_pcc(peak_xims[selected[0]], peak_xims[selected[isotope]])
+                        )
+                        pcc[isotope] = (pcc_xic[isotope] + pcc_xim[isotope]) / 2
+                found = [
+                    peak_found[0],
+                    peak_found[1] and pcc[1] > pcc_threshold,
+                    peak_found[2] and pcc[2] > pcc_threshold,
+                ]
                 results.append(
                     {
                         "Run": row["Run"],
@@ -247,8 +313,16 @@ def analyze_run(
                         - float(row["RT.seconds"]),
                         "merged_ms1_frames": ",".join(map(str, selected_frame_ids)),
                         "M_found": found[0],
+                        "M1_peak_found": peak_found[1],
+                        "M2_peak_found": peak_found[2],
                         "M1_found": found[1],
                         "M2_found": found[2],
+                        "M1_pcc_xic": pcc_xic[1],
+                        "M1_pcc_xim": pcc_xim[1],
+                        "M1_pcc": pcc[1],
+                        "M2_pcc_xic": pcc_xic[2],
+                        "M2_pcc_xim": pcc_xim[2],
+                        "M2_pcc": pcc[2],
                         "M_intensity": intensity[0],
                         "M1_intensity": intensity[1],
                         "M2_intensity": intensity[2],
@@ -319,6 +393,8 @@ def main() -> int:
     print("RT conversion: seconds = DIA-NN RT minutes * 60")
     print(f"IM conversion: AT = (IM - {IM_INTERCEPT}) / {IM_SLOPE}")
     print(f"merged adjacent MS1 frames: {args.merge_ms1}")
+    print(f"XIC MS1 frames: {args.xic_ms1}")
+    print(f"isotope PCC condition: (PCC_XIC + PCC_XIM) / 2 > {args.pcc_threshold}")
     print(f"peak window: {args.ppm} ppm, AT +/- {args.at_tolerance} ms")
     print(f"local-maximum neighbor threshold: {args.neighbor_points}")
     print("M-1: not evaluated")
@@ -341,6 +417,8 @@ def main() -> int:
             rows,
             mbi_path,
             merge_ms1=args.merge_ms1,
+            xic_ms1=args.xic_ms1,
+            pcc_threshold=args.pcc_threshold,
             ppm=args.ppm,
             at_tolerance=args.at_tolerance,
             neighbor_points=args.neighbor_points,
