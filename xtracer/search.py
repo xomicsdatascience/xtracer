@@ -2,20 +2,11 @@ import numpy as np
 
 import numba.typed
 from xtracer.utils import *
-from xtracer.mbi import MBIReader
-from io import StringIO
 
 try:
     profile
 except:
     profile = lambda x: x
-
-
-def save_frame_result(frame_rt, frame_ats, frame_mzs, idx):
-    rts = [frame_rt] * len(idx)
-    ats = frame_ats[idx]
-    mzs = frame_mzs[idx]
-    return rts, ats, mzs
 
 
 def check_ms(ats, mzs, ints):
@@ -24,8 +15,19 @@ def check_ms(ats, mzs, ints):
     assert ints.min() > 0
 
 
+def format_mgf_peaks(mzs, intensities, pcc_values=None):
+    """Return an ASCII MGF peak block as bytes, optionally with PCC values."""
+    if pcc_values is None:
+        return format_mz_int(mzs, intensities)
+    return ''.join(
+        f'{mz:.6f} {intensity:.2f} {pcc:.2f}\n'
+        for mz, intensity, pcc in zip(mzs, intensities, pcc_values)
+    ).encode('ascii')
+
 @profile
 def main(args, indir, outdir, mode):
+    from xtracer.mbi import MBIReader
+
     # read .mbi
     if mode == 'xim':
         across_cycle_num = args.xim_across_cycle_num
@@ -38,7 +40,6 @@ def main(args, indir, outdir, mode):
     # loop cycle
     frame_rts = np.array(mbi.GetRetentionTimes())
     frame_levels = np.array(mbi.GetFrameMSLevels())
-    tmp_max, tmp_apex, tmp_cluster = [], [], []
     n_seed = 0
     with open(outdir, "wb", buffering=1024*1024*50) as f:
         buffer = bytearray()
@@ -54,8 +55,8 @@ def main(args, indir, outdir, mode):
             frame2_deque = mbi.deque_frame2
 
             # merge frames for maximum points
-            frame1_at, frame1_mz, frame1_height = merge_frames(mbi.deque_frame1, 3)
-            frame2_at, frame2_mz, frame2_height = merge_frames(mbi.deque_frame2, 3)
+            frame1_at, frame1_mz, frame1_height = merge_frames(mbi.deque_frame1, args.xim_across_cycle_num)
+            frame2_at, frame2_mz, frame2_height = merge_frames(mbi.deque_frame2, args.xim_across_cycle_num)
             check_ms(frame1_at, frame1_mz, frame1_height)
             check_ms(frame2_at, frame2_mz, frame2_height)
 
@@ -84,8 +85,7 @@ def main(args, indir, outdir, mode):
             # MS1cluster：M, M+1H, M+2H
             # [n_max, charge range, isotope num]
             if mode == 'xic':
-                # is_apex1 = (xics1[:, 3] >= xics1[:, 4]) & (xics1[:, 3] >= xics1[:, 2])
-                is_apex1 = xics1[:, 3] > 0
+                is_apex1 = xics1[:, across_cycle_num // 2] > 0
                 idx_apex1 = idx_max1[is_apex1]
                 left_m, right_m, gaussian_m = find_isotope_cluster_xic(
                     frame1_at, frame1_mz, frame1_height,
@@ -103,13 +103,6 @@ def main(args, indir, outdir, mode):
                 xics1 = xics1[cluster_idx]
                 idx_cluster1 = idx_apex1[cluster_idx]
 
-                # tmp_max.append(save_frame_result(frame_rt, frame1_at, frame1_mz, idx_max1))
-                # tmp_apex.append(save_frame_result(frame_rt, frame1_at, frame1_mz, idx_apex1))
-                # tmp_cluster.append(save_frame_result(frame_rt, frame1_at, frame1_mz, idx_cluster1))
-                # continue
-        # cal_recall(tmp_max)
-        # cal_recall(tmp_apex)
-        # cal_recall(tmp_cluster)
             if mode == 'xim':
                 is_apex1 = np.ones(len(idx_max1), dtype=bool)
                 idx_apex1 = idx_max1[is_apex1]
@@ -129,7 +122,7 @@ def main(args, indir, outdir, mode):
                 xims1 = xims1[cluster_idx]
                 idx_cluster1 = idx_apex1[cluster_idx]
             if mode == 'xix':
-                is_apex1 = xics1[:, 3] > 0
+                is_apex1 = xics1[:, across_cycle_num // 2] > 0
                 idx_apex1 = idx_max1[is_apex1]
                 left_m, right_m, gaussian_m = find_isotope_cluster_xix(
                     frame1_at, frame1_mz, frame1_height,
@@ -236,15 +229,11 @@ def main(args, indir, outdir, mode):
                 scan_height = max2_ints[pcc_good]
                 assert len(scan_mz) == len(scan_height)
                 # 不同charge也是相同scan_mz
-                if args.write_pcc:
-                    scan_pcc = pcc_v[pcc_good]
-                    peak_str = "\n".join(
-                        f"{m:.6f} {h:.2f} {p:.2f}" for m, h, p in
-                        zip(scan_mz, scan_height, scan_pcc))
-                else:
-                    # peak_str = "\n".join([f"{m:.6f} {h:.2f}" for m, h in zip(scan_mz, scan_height)])
-                    peak_str = format_mz_int(scan_mz, scan_height)
-                peak_block = peak_str + b"END IONS\n\n"
+                scan_pcc = pcc_v[pcc_good] if args.write_pcc else None
+                peak_block = (
+                    format_mgf_peaks(scan_mz, scan_height, scan_pcc)
+                    + b"END IONS\n\n"
+                )
                 common_header = f"RTINSECONDS={frame_rt:.2f}\nAT={pr_at:.2f}\nPEPMASS={pr_mz:.6f} {pr_height:.2f}\n".encode()
 
                 # write

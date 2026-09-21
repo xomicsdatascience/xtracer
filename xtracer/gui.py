@@ -36,12 +36,13 @@ def main(argv=None):
     missing = [path for path in (args.mbi, args.mgf, args.sage_results, args.matched_fragments) if not path.is_file()]
     if missing:
         logger.error('status: failed; missing input: %s', ', '.join(map(str, missing)))
+        Logger.close()
         return 2
 
     script = Path(__file__).with_name('streamlit_sage.py').resolve()
     cmd = [
         sys.executable, '-m', 'streamlit', 'run', str(script),
-        '--server.headless', 'true', '--',
+        '--server.headless', 'false', '--',
         str(args.mbi.resolve()), str(args.mgf.resolve()),
         str(args.sage_results.resolve()), str(args.matched_fragments.resolve()),
     ]
@@ -50,9 +51,12 @@ def main(argv=None):
         completed = subprocess.run(cmd, check=False)
     except OSError as exc:
         logger.exception('status: failed; unable to start Streamlit: %s', exc)
+        Logger.close()
         return 1
     if completed.returncode:
         logger.error('status: failed; Streamlit exit_code=%s', completed.returncode)
+        Logger.close()
         return completed.returncode
     logger.info('status: success')
+    Logger.close()
     return 0

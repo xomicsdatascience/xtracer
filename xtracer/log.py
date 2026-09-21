@@ -42,9 +42,7 @@ class Logger:
         fh.setFormatter(formatter)
         ch.setFormatter(formatter)
 
-        for handler in list(cls.logger.handlers):
-            cls.logger.removeHandler(handler)
-            handler.close()
+        cls.close()
         cls.logger.addHandler(fh)
         cls.logger.addHandler(ch)
 
@@ -60,6 +58,13 @@ class Logger:
                 parameters, indent=2, sort_keys=True, default=str,
             ))
         return log_path
+
+    @classmethod
+    def close(cls):
+        """Flush and close every active xTracer log handler."""
+        for handler in list(cls.logger.handlers):
+            cls.logger.removeHandler(handler)
+            handler.close()
 
     @classmethod
     def get_logger(cls):

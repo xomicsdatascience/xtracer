@@ -1,4 +1,4 @@
-"""Convert one PAMAF .mbi file to a single-window Bruker TDF .d dataset."""
+"""Convert PAMAF .mbi files to single-window Bruker TDF .d datasets."""
 import argparse
 import shutil
 import sqlite3
@@ -185,23 +185,6 @@ def _convert(input_mbi, output, logger):
                        'timing_write_seconds': round(write_seconds, 3)}.items():
         logger.info('%s: %s', key, value)
 
-def _resolve_jobs(input_path, output_arg, parser):
-    if input_path.is_file():
-        if input_path.suffix.lower() != '.mbi':
-            parser.error(f'Input must be a .mbi file: {input_path}')
-        output = output_arg if output_arg else input_path.with_suffix('.d')
-        return [(input_path, output)]
-    if input_path.is_dir():
-        inputs = sorted(input_path.glob('*.mbi'))
-        if not inputs:
-            parser.error(f'No .mbi files found in: {input_path}')
-        output_dir = output_arg if output_arg else input_path
-        if output_dir.suffix.lower() == '.d':
-            parser.error('For a folder input, --output must be an output folder, not a .d path.')
-        return [(item, output_dir / f'{item.stem}.d') for item in inputs]
-    parser.error(f'Input path not found: {input_path}')
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='xtracer convert', description='Convert PAMAF .mbi files to Bruker TDF .d directories.')
     source = parser.add_mutually_exclusive_group(required=True)
@@ -249,19 +232,26 @@ def main(argv=None):
                 logger.info('skip %s/%s: output exists: %s', index, len(jobs), output)
                 skipped += 1
                 continue
-            shutil.rmtree(output)
+            if output.is_dir():
+                shutil.rmtree(output)
+            else:
+                output.unlink()
         logger.info('start %s/%s: %s', index, len(jobs), input_mbi.name)
-        print(f'\\n[{index}/{len(jobs)}] {input_mbi.name}', flush=True)
+        print(f'\n[{index}/{len(jobs)}] {input_mbi.name}', flush=True)
         try:
             _convert(input_mbi, output, logger)
             logger.info('success %s/%s: %s', index, len(jobs), output)
         except Exception:
             if output.exists():
-                shutil.rmtree(output)
+                if output.is_dir():
+                    shutil.rmtree(output)
+                else:
+                    output.unlink()
             logger.exception('failed %s/%s: %s', index, len(jobs), input_mbi)
             failures += 1
     logger.info('status: %s; converted=%s skipped=%s failed=%s',
                 'success' if not failures else 'failed', len(jobs)-skipped-failures, skipped, failures)
+    Logger.close()
     return 1 if failures else 0
 
 

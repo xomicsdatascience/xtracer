@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xtracer-pamaf"
 dynamic = ["version"]
-description = "Converting PAMAF .mbi data to pseudo-MS/MS files by untargeted methods."
+description = "Search, convert, and visualize PAMAF mass-spectrometry data."
 readme = "README.md"
 requires-python = "==3.12.11"
 license = {text = "MIT"}
@@ -16,6 +16,8 @@ dependencies = [
   "numpy==1.26.4",
   "numba==0.61.2",
   "pyteomics==4.7.5",
+  "pandas==2.3.3",
+  "matplotlib==3.10.8",
   "streamlit==1.56.0",
   "pyzstd==0.19.1",
 ]

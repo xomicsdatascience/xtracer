@@ -1,0 +1,39 @@
+name: Test package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.11"
+          cache: pip
+
+      - name: Install package and build tools
+        run: python -m pip install . build
+
+      - name: Compile source
+        run: python -m compileall -q xtracer
+
+      - name: Run release tests
+        run: python -m unittest discover -s tests -p "test_release_*.py" -v
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Check wheel contents
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          python -c "import sys, zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); forbidden=('_mbisdk.pyd','MBI_SDK.dll','sdk/mbisdk.py','analyze_diann_isotopes.py'); found=[name for name in names if name.endswith(forbidden)]; assert not found, found; assert any(name.endswith('.dist-info/licenses/LICENSE') for name in names), names" $wheel.FullName

@@ -1,114 +1,227 @@
 # xTracer
 
-Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://www.biorxiv.org/content/biorxiv/early/2024/10/22/2024.10.18.619158.full.pdf)) achieves near-complete ion utilization and high spectral specificity by fragmenting all mobility-separated precursors without quadrupole isolation. Leveraging the ultrahigh mobility resolution of SLIM, this quadrupole-free strategy maximizes ion sampling efficiency and offers a promising approach in mass spectrometry–based proteomics, particularly for low-abundance peptides or low-input samples. However, the unique data structure of PAMAF—where precursor–fragment relationships are encoded along the mobility dimension—renders it incompatible with existing peptide identification tools. Here, we present xTracer, the first untargeted peptide identification algorithm developed specifically for PAMAF data. xTracer integrates correlations across both chromatographic and mobility dimensions to associate precursor and fragment ions, reconstruct pseudo-spectra, and enable database searching using well-established DDA search engines. Applied to datasets with varying sample loads and acquisition throughputs, xTracer consistently achieved robust and reproducible peptide identifications, outperforming single-domain correlation strategies. Overall, xTracer provides a versatile and high-efficiency computational framework for reconstructing pseudo-spectra from quadrupole-free, mobility-aligned fragmentation data, enhancing the analytical power of high-resolution ion mobility–based proteomics.
+Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://www.biorxiv.org/content/10.1101/2024.10.18.619158v1)) fragments mobility-separated precursors without quadrupole isolation. xTracer uses chromatographic and mobility correlations to associate precursor and fragment ions, reconstruct pseudo-spectra, convert PAMAF data into a single-window TDF representation, and inspect Sage identifications interactively.
 
----
-### Contents
-**[Datasets](#dataset)**<br>
-**[Installation](#installation)**<br>
-**[Usage](#usage)**<br>
-**[Output](#output)**<br>
+## Contents
 
----
-### Datasets
-Varying sample load dataset and varying throughput dataset by PAMAF acquisition can be downloaded from [MSV000099577](https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession=MSV000099577
-)
+- [Datasets](#datasets)
+- [Installation](#installation)
+- [Commands](#commands)
+- [Search: generate pseudo-spectra](#xtracer-search)
+- [Convert: create TDF `.d` datasets](#xtracer-convert)
+- [GUI: inspect Sage identifications](#xtracer-gui)
+- [Logs](#logs)
+- [Troubleshooting](#troubleshooting)
 
-### Installation
-We recommend using [Conda](https://www.anaconda.com/) to create a Python environment for using xTracer on Windows.
+## Datasets
 
-1. Create a Python environment with version 3.12.11 to consistent with the SDK environment.
-    ```bash
-    conda create -n xtracer_env python=3.12.11
-    conda activate xtracer_env
-    ```
+The PAMAF varying-sample-load and varying-throughput datasets are available from [MassIVE MSV000099577](https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession=MSV000099577).
 
-2. Install xTracer
-    ```bash
-    pip install xtracer-pamaf
-    ```
+## Installation
 
-3. SDK access
->   Please send an SDK request email to [Mobilion Inc.](mailto:support@mobilionsystems.com), 
->   and then copy the file *_mbisdk.pyd, MBI_SDK.dll and mbisdk.py* into the sdk folder under the xTracer installation directory.
-
-- We also recommend installing directly via GitHub:
-   ```bash
-   pip install git+https://github.com/xomicsdatascience/xtracer.git
-   ```
----
-### Usage
-```bash
-xtracer -ws_in "the folder that contains .mbi files" -xix
-```
-The pseudo-spectrum command writes a timestamped run log with the effective parameters to its output directory. All parameters are listed by `xtracer -h`:
-```
-optional arguments for users:
-  -h, --help                     Show this help message and exit.
-  -ws_in WS_IN                   Specify the folder that contains .mbi files.
-  -out_name OUT_NAME             Specify the folder name that contains .mgf files. Default: mgf_xtracer
-  -xic                           Using XIC-based method to calculate PCC
-  -xim                           Using XIM-based method to calculate PCC
-  -xix                           Using XIM + XIC method to calculate PCC
-  -write_pcc                     Specify whether to write PCC values to MS/MS files. Default: False
-  -pr_mz_min PR_MZ_MIN           Specify the minimum m/z value of precursors. Default: 200
-  -charge_min CHARGE_MIN         Specify the minimum charge of precursors. Default: 2
-  -charge_max CHARGE_MAX         Specify the maximum charge of precursors. Default: 4
-  -at_min AT_MIN                 Specify the minimum arrival time (at) value of signals. Default: 100 ms
-  -tol_at_area TOL_AT_AREA       Specify the millisecond tolerance of signal in at dimension. Default: 2.0
-  -tol_at_shift TOL_AT_SHIFT     Specify the millisecond tolerance when considering signal related. Default: 1
-  -tol_ppm TOL_PPM               Specify the ppm tolerance of signal in m/z dimension. Default: 30
-  -tol_iso_num TOL_ISO_NUM       Specify how many isotopes should have to be a precursor. Default: 2, i.e. M, M+1H, M+2H
-  -tol_pcc TOL_PCC               Specify the PCC tolerance when two signal are related. Default: 0.3
-  -tol_neighbor1_num TOL_NEIGHBOR1_NUM  MS1 local-neighbor threshold. Default: 5
-  -tol_neighbor2_num TOL_NEIGHBOR2_NUM  MS2 local-neighbor threshold. Default: 3
-  -tol_fg_num TOL_FG_NUM         Specify the fragment ions num tolerance that a spectrum should have. Default: 10
-  -xim_across_cycle_num          Specify the odd XIM cycle span when summing frames. Default: 3
-  -xic_across_cycle_num          Specify the odd XIC cycle span when extracting XIC. Default: 7
-```
-
-### Output
-For each .mbi file, xTracer produces a corresponding .mgf DDA-like file that can be analyzed by DDA engines for identification.
-## Convert PAMAF `.mbi` to `.d`
+xTracer currently requires Windows and Python 3.12.11.
 
 ```powershell
-xtracer convert sample.mbi
-xtracer convert sample.mbi -o D:\results\sample.d
-xtracer convert sample.mbi --force
+conda create -n xtracer_env python=3.12.11
+conda activate xtracer_env
+pip install xtracer-pamaf
 ```
 
-The converter creates a single-window Bruker TDF `.d` representation for DIA-NN or diaTracer. It uses a synthetic ion-mobility coordinate derived from PAMAF arrival time; it is not a physically calibrated timsTOF acquisition. Existing output directories are never changed unless `--force` is provided.
+The latest GitHub version can instead be installed with:
 
+```powershell
+pip install git+https://github.com/xomicsdatascience/xtracer.git
+```
 
-## Visualization
-xTracer provides a Streamlit-based visualization panel for inspecting the identified peptides by Sage.
+### MBI SDK
 
-1. Run Sage using the `--annotate-matches` option. 
-Sage will save the peptide results to `results.sage.tsv` and the matched fragment ion results to `matched_fragments.sage.tsv` on same folder.
-2. Launch the visualization GUI via `xtracer gui`:
-    ```bash
-    xtracer gui --mbi "path of .mbi file" --mgf "path of .mgf file" --sage-results "path of results.sage.tsv" --out-dir "path of gui logs"
-    ```
-3. The interfaces of xtracer gui are shown below:
+Reading `.mbi` files requires the Mobilion MBI SDK. Request the SDK from [support@mobilionsystems.com](mailto:support@mobilionsystems.com), then copy these three files into the installed `xtracer/sdk` directory:
+
+```text
+_mbisdk.pyd
+MBI_SDK.dll
+mbisdk.py
+```
+
+The destination can be located with:
+
+```powershell
+python -c "from pathlib import Path; import xtracer.sdk; print(Path(xtracer.sdk.__file__).parent)"
+```
+
+The Mobilion SDK is not distributed with xTracer.
+
+## Commands
+
+```text
+xtracer search   Generate DDA-like pseudo-spectra from PAMAF .mbi files.
+xtracer convert  Convert PAMAF .mbi files into TDF .d directories.
+xtracer gui      Open the interactive viewer for Sage identifications.
+```
+
+Use `xtracer --help` for the command overview or `xtracer <command> --help` for command-specific arguments.
+
+## `xtracer search`
+
+`xtracer search` processes every `.mbi` file directly inside the input folder and writes one `.mgf` file per input.
+
+Recommended combined XIC/XIM search:
+
+```powershell
+xtracer search -ws_in "D:\PAMAF\amount" -xix
+```
+
+Choose exactly one correlation mode:
+
+```powershell
+xtracer search -ws_in "D:\PAMAF\amount" -xic
+xtracer search -ws_in "D:\PAMAF\amount" -xim
+xtracer search -ws_in "D:\PAMAF\amount" -xix
+```
+
+By default, results are written to `<input-folder>\mgf_xtracer`. A different output-folder name can be selected with `-out_name`:
+
+```powershell
+xtracer search -ws_in "D:\PAMAF\amount" -out_name xtracer200 -xix
+```
+
+### Search parameters
+
+| Parameter | Default | Description |
+|---|---:|---|
+| `-ws_in` | required | Folder containing the input `.mbi` files. |
+| `-out_name` | `mgf_xtracer` | Output-folder name created below `-ws_in`. |
+| `-xic` | — | Use chromatographic correlations. |
+| `-xim` | — | Use mobility correlations. |
+| `-xix` | — | Use the mean of XIC and XIM correlations. |
+| `-write_pcc` | off | Write PCC as a third value for each retained fragment peak. |
+| `-pr_mz_min` | `200` | Minimum precursor m/z. |
+| `-charge_min` | `2` | Minimum precursor charge. |
+| `-charge_max` | `4` | Maximum precursor charge. |
+| `-at_min` | `100` | Minimum arrival time in milliseconds. |
+| `-tol_at_area` | `2.0` | Arrival-time integration tolerance in milliseconds. |
+| `-tol_at_shift` | `1.0` | Arrival-time matching tolerance in milliseconds. |
+| `-tol_ppm` | `30` | m/z matching tolerance in ppm. |
+| `-tol_iso_num` | `2` | Required isotope peaks to the right of M; `2` requires M, M+1, and M+2. |
+| `-tol_pcc` | `0.3` | Minimum precursor–fragment PCC. |
+| `-tol_neighbor1_num` | `5` | MS1 local-neighbor threshold. |
+| `-tol_neighbor2_num` | `3` | MS2 local-neighbor threshold. |
+| `-tol_fg_num` | `10` | Minimum number of matched fragment ions. |
+| `-xim_across_cycle_num` | `3` | Positive odd MS1/MS2 cycle span used for XIM processing. |
+| `-xic_across_cycle_num` | `7` | Positive odd MS1/MS2 cycle span used for XIC extraction. |
+
+The standard `.mgf` output can be searched with a DDA search engine such as Sage. `-write_pcc` is intended for diagnostic inspection because it adds a third column to each fragment line.
+
+## `xtracer convert`
+
+### Convert one file
+
+Write beside the input file using the same base name:
+
+```powershell
+xtracer convert "D:\PAMAF\sample.mbi"
+```
+
+Specify the output `.d` directory:
+
+```powershell
+xtracer convert "D:\PAMAF\sample.mbi" -o "D:\results\sample.d"
+```
+
+### Convert a folder
+
+Convert every `.mbi` file directly inside `-ws_in`:
+
+```powershell
+xtracer convert -ws_in "D:\PAMAF\amount"
+```
+
+The default batch output folder is `<input-folder>\diann_diatracer`. Select another folder name with:
+
+```powershell
+xtracer convert -ws_in "D:\PAMAF\amount" -out_name convert_to_d
+```
+
+Each input becomes `<output-folder>\<sample-name>.d`. Every `.d` directory contains:
+
+```text
+analysis.tdf
+analysis.tdf_bin
+```
+
+Existing outputs are skipped by default. Use `--force` to delete and recreate each existing target:
+
+```powershell
+xtracer convert -ws_in "D:\PAMAF\amount" -out_name convert_to_d --force
+```
+
+The converter represents PAMAF MS2 data as one wide DIA window and maps PAMAF arrival time linearly to the TDF ion-mobility coordinate. A progress bar reports completed frames and estimated remaining time. One conversion invocation produces one log file, including batch conversion of multiple inputs.
+
+## `xtracer gui`
+
+The GUI displays XIC, XIM, MS1 isotope heatmaps, and annotated MS/MS spectra for xTracer results searched with Sage.
+
+Run Sage with `--annotate-matches` so that it produces both:
+
+```text
+results.sage.tsv
+matched_fragments.sage.tsv
+```
+
+Then launch the viewer:
+
+```powershell
+xtracer gui `
+  --mbi "D:\PAMAF\sample.mbi" `
+  --mgf "D:\PAMAF\mgf_xtracer\sample.mgf" `
+  --sage-results "D:\PAMAF\sage_out\results.sage.tsv" `
+  --out-dir "D:\PAMAF\gui_logs"
+```
+
+If `--matched-fragments` is omitted, xTracer looks for `matched_fragments.sage.tsv` beside `results.sage.tsv`. Otherwise, specify it explicitly:
+
+```powershell
+xtracer gui --mbi sample.mbi --mgf sample.mgf `
+  --sage-results results.sage.tsv `
+  --matched-fragments matched_fragments.sage.tsv `
+  --out-dir gui_logs
+```
+
+The default web browser opens automatically. Keep the terminal running while using the GUI and press `Ctrl+C` to stop it.
+
 - XIC
 
-<img src="assets/xic.png" width="400">
+  <img src="assets/xic.png" width="500" alt="xTracer XIC viewer">
 
 - XIM
 
-<img src="assets/xim.png" width="400">
+  <img src="assets/xim.png" width="500" alt="xTracer XIM viewer">
 
-- Heatmap for the MS1 isotope cluster
+- MS1 isotope heatmap
 
-<img src="assets/heatmap.png" width="400">
+  <img src="assets/heatmap.png" width="500" alt="xTracer isotope heatmap">
 
-- MS/MS
+- MS/MS spectrum
 
-<img src="assets/spec.png" width="400">
+  <img src="assets/spec.png" width="500" alt="xTracer annotated MS/MS spectrum">
 
----
+## Logs
+
+Every command creates a timestamped `.log` file in its output location. The log records:
+
+- xTracer and Python versions;
+- the executed command;
+- all effective parameters, including defaults;
+- input counts and output paths;
+- processing status and errors;
+- conversion timing statistics where applicable.
+
 ## Troubleshooting
-- Please create a GitHub issue and we will respond as soon as possible.
-- Email: jian.song.2025@outlook.com
 
----
+- Confirm that Python is version 3.12.11 and that all three MBI SDK files are in the installed `xtracer/sdk` directory.
+- Run `xtracer <command> --help` to verify the installed command and parameters.
+- Report problems through [GitHub Issues](https://github.com/xomicsdatascience/xtracer/issues) or email [jian.song.2025@outlook.com](mailto:jian.song.2025@outlook.com).
+
+## License
+
+xTracer is released under the MIT License. The Mobilion MBI SDK is distributed separately under its own terms.
