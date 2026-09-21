@@ -15,10 +15,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: conda-incubator/setup-miniconda@v4
         with:
+          activate-environment: xtracer-ci
+          miniconda-version: "latest"
           python-version: "3.12.11"
-          cache: pip
+
+      - name: Verify Python version
+        run: python -c "import sys; assert sys.version_info[:3] == (3, 12, 11), sys.version"
 
       - name: Install package and build tools
         run: python -m pip install . build
