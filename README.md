@@ -1,6 +1,6 @@
 # xTracer
 
-Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://doi.org/10.1016/j.mcpro.2026.101608)) fragments mobility-separated precursors without quadrupole isolation. xTracer uses chromatographic and mobility correlations to associate precursor and fragment ions, reconstruct pseudo-spectra, convert PAMAF data into single-window diaPASEF in `.d` format, and inspect Sage identifications interactively.
+Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://doi.org/10.1016/j.mcpro.2026.101608)) fragments mobility-separated precursors without quadrupole isolation. Existing peptide identification tools are not optimized for PAMAF data. xTracer uses chromatographic and mobility correlations to associate precursor and fragment ions, reconstruct pseudo-spectra, convert PAMAF data into single-window diaPASEF in `.d` format, and inspect Sage identifications interactively.
 
 ## Contents
 
@@ -35,12 +35,12 @@ pip install git+https://github.com/xomicsdatascience/xtracer.git
 
 ### MBI SDK
 
-Reading `.mbi` files requires the Mobilion MBI SDK. Send an SDK request email to [MOBILion Systems](mailto:support@mobilionsystems.com), then copy these three files into the installed `xtracer/sdk` directory:
+Reading `.mbi` files requires the MOBILion MBI SDK, which is publicly available for non-commercial use from the [official MOBILion MBI SDK repository](https://github.com/MOBILionSystems/MOBILion_MBI_SDK), subject to the [MOBILion Software Use Agreement](https://github.com/MOBILionSystems/MOBILion_MBI_SDK/blob/main/LICENSE.md). On Windows, copy these three files from the SDK repository into the installed `xtracer/sdk` directory:
 
 ```text
-_mbisdk.pyd
-MBI_SDK.dll
-mbisdk.py
+lib/win-x64/swig-python/_mbisdk.pyd
+lib/win-x64/MBI_SDK.dll
+lib/win-x64/swig-python/mbisdk.py
 ```
 
 The destination can be located with:
@@ -224,4 +224,4 @@ Every command creates a timestamped `.log` file in its output location. The log 
 
 ## License
 
-xTracer is released under the MIT License. The Mobilion MBI SDK is distributed separately under its own terms.
+xTracer is released under the MIT License. The MOBILion MBI SDK is available separately under the MOBILion Software Use Agreement and is not distributed with xTracer.
