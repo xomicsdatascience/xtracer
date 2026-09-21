@@ -191,7 +191,7 @@ def main(argv=None):
     source.add_argument('input_mbi', nargs='?', type=Path, help='One input .mbi file.')
     source.add_argument('-ws_in', type=Path, help='Folder containing .mbi files for one batch conversion run.')
     parser.add_argument('-o', '--output', type=Path, help='Output .d path for a single input file.')
-    parser.add_argument('-out_name', default='diann_diatracer', help='Output folder name below -ws_in.')
+    parser.add_argument('-out_name', default='mbi2d', help='Output folder name below -ws_in.')
     parser.add_argument('--force', action='store_true', help='Delete and recreate outputs that already exist.')
     args = parser.parse_args(argv)
     if args.ws_in:

@@ -1,6 +1,6 @@
 # xTracer
 
-Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://www.biorxiv.org/content/10.1101/2024.10.18.619158v1)) fragments mobility-separated precursors without quadrupole isolation. xTracer uses chromatographic and mobility correlations to associate precursor and fragment ions, reconstruct pseudo-spectra, convert PAMAF data into a single-window TDF representation, and inspect Sage identifications interactively.
+Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://doi.org/10.1016/j.mcpro.2026.101608)) fragments mobility-separated precursors without quadrupole isolation. xTracer uses chromatographic and mobility correlations to associate precursor and fragment ions, reconstruct pseudo-spectra, convert PAMAF data into single-window diaPASEF in `.d` format, and inspect Sage identifications interactively.
 
 ## Contents
 
@@ -35,7 +35,7 @@ pip install git+https://github.com/xomicsdatascience/xtracer.git
 
 ### MBI SDK
 
-Reading `.mbi` files requires the Mobilion MBI SDK. Request the SDK from [support@mobilionsystems.com](mailto:support@mobilionsystems.com), then copy these three files into the installed `xtracer/sdk` directory:
+Reading `.mbi` files requires the Mobilion MBI SDK. Send an SDK request email to [MOBILion Systems](mailto:support@mobilionsystems.com), then copy these three files into the installed `xtracer/sdk` directory:
 
 ```text
 _mbisdk.pyd
@@ -55,7 +55,7 @@ The Mobilion SDK is not distributed with xTracer.
 
 ```text
 xtracer search   Generate DDA-like pseudo-spectra from PAMAF .mbi files.
-xtracer convert  Convert PAMAF .mbi files into TDF .d directories.
+xtracer convert  Convert PAMAF .mbi files into single-window diaPASEF .d directories.
 xtracer gui      Open the interactive viewer for Sage identifications.
 ```
 
@@ -136,7 +136,7 @@ Convert every `.mbi` file directly inside `-ws_in`:
 xtracer convert -ws_in "D:\PAMAF\amount"
 ```
 
-The default batch output folder is `<input-folder>\diann_diatracer`. Select another folder name with:
+The default batch output folder is `<input-folder>\mbi2d`. Select another folder name with:
 
 ```powershell
 xtracer convert -ws_in "D:\PAMAF\amount" -out_name convert_to_d
@@ -155,7 +155,7 @@ Existing outputs are skipped by default. Use `--force` to delete and recreate ea
 xtracer convert -ws_in "D:\PAMAF\amount" -out_name convert_to_d --force
 ```
 
-The converter represents PAMAF MS2 data as one wide DIA window and maps PAMAF arrival time linearly to the TDF ion-mobility coordinate. A progress bar reports completed frames and estimated remaining time. One conversion invocation produces one log file, including batch conversion of multiple inputs.
+The converter represents PAMAF data as single-window diaPASEF in `.d` format and maps PAMAF arrival time linearly to the TDF ion-mobility coordinate. A progress bar reports completed frames and estimated remaining time. One conversion invocation produces one log file, including batch conversion of multiple inputs.
 
 ## `xtracer gui`
 

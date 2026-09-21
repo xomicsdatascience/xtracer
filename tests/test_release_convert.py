@@ -85,6 +85,19 @@ class ConvertReleaseTests(unittest.TestCase):
             self.assertFalse((output / 'old.txt').exists())
             self.assertTrue((output / 'new.txt').exists())
 
+    def test_batch_default_output_folder_is_mbi2d(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / 'sample.mbi').touch()
+
+            def fake_convert(_source, target, _logger):
+                target.mkdir(parents=True)
+
+            with mock.patch.object(convert, '_convert', side_effect=fake_convert):
+                result = convert.main(['-ws_in', str(root)])
+            self.assertEqual(result, 0)
+            self.assertTrue((root / 'mbi2d' / 'sample.d').is_dir())
+
     def test_batch_uses_one_log_and_one_output_per_input(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
