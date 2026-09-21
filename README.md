@@ -1,6 +1,6 @@
 # xTracer
 
-Parallel Accumulation with Mobility Aligned Fragmentation ([PAMAF](https://doi.org/10.1016/j.mcpro.2026.101608)) fragments mobility-separated precursors without quadrupole isolation. Existing peptide identification tools are not optimized for PAMAF data. xTracer uses chromatographic and mobility correlations to associate precursor and fragment ions, reconstruct pseudo-spectra, convert PAMAF data into single-window diaPASEF in `.d` format, and inspect Sage identifications interactively.
+Parallel Accumulation with Mobility-Aligned Fragmentation ([PAMAF](https://doi.org/10.1016/j.mcpro.2026.101608)) achieves near-complete ion utilization and high spectral specificity by fragmenting all mobility-separated precursors without quadrupole isolation. Leveraging the ultrahigh mobility resolution of SLIM, this quadrupole-free strategy maximizes ion utilization efficiency and offers a promising approach in mass spectrometry–based proteomics. However, the unique data structure of PAMAF, where precursor–fragment relationships are encoded along the mobility dimension, is not ideally suited to many existing peptide identification tools. Here, we present xTracer, an untargeted peptide identification algorithm developed specifically for PAMAF data. xTracer integrates correlations across both chromatographic and mobility dimensions to associate precursor and fragment ions, reconstruct pseudo-spectra, and enable database searching using well-established DDA search engines.
 
 ## Contents
 
