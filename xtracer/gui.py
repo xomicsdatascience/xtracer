@@ -4,8 +4,14 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 from xtracer.log import Logger
+
+
+def normalize_sage_filename(filename):
+    """Return the local basename represented by a Sage filename field."""
+    return Path(unquote(str(filename))).name
 
 
 def parse_args(argv=None):
@@ -49,6 +55,10 @@ def main(argv=None):
     logger.info('streamlit_command: %s', ' '.join(cmd))
     try:
         completed = subprocess.run(cmd, check=False)
+    except KeyboardInterrupt:
+        logger.info('status: stopped by user')
+        Logger.close()
+        return 0
     except OSError as exc:
         logger.exception('status: failed; unable to start Streamlit: %s', exc)
         Logger.close()

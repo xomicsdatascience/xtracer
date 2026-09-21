@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import streamlit as st
+from xtracer.gui import normalize_sage_filename
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -76,12 +77,15 @@ def load_and_merge(fmgf, fsage, fmatch):
     scannr_at_d = extract_at_from_mgf(fmgf)
 
     df_sage = pd.read_csv(fsage, sep='\t')
+    sage_filename = df_sage['filename'].map(normalize_sage_filename)
     df_sage = df_sage[
         (df_sage['label'] == 1) &
         (df_sage['peptide_q'] < 0.01) &
-        (df_sage['filename'] == fmgf.name)
+        (sage_filename == fmgf.name)
     ]
     df_sage = df_sage.reset_index(drop=True)
+    if df_sage.empty:
+        raise ValueError(f'No accepted Sage PSMs match MGF file: {fmgf.name}')
 
     df_sage['pr_id'] = df_sage['peptide'] + df_sage['charge'].astype(str)
     df_sage = df_sage.sort_values('peptide_q', ascending=True)
@@ -104,7 +108,10 @@ def load_and_merge(fmgf, fsage, fmatch):
     df_fg['fragment_mz_calculated'] = df_fg['fragment_mz_calculated'].astype(str)
     df_fg['fragment_intensity'] = df_fg['fragment_intensity'].astype(str)
     df_fg['fragment_ordinals'] = df_fg['fragment_ordinals'].astype(str)
-    tmp = np.where(df_fg["fragment_charge"] == 1, "", np.char.multiply("+", df_fg["fragment_charge"]))
+    if df_fg.empty:
+        raise ValueError('No matched fragments were found for the selected Sage PSMs')
+    fragment_charge = df_fg['fragment_charge'].to_numpy(dtype=np.int64)
+    tmp = np.where(fragment_charge == 1, "", np.char.multiply("+", fragment_charge))
     df_fg['fg_anno'] = df_fg['fragment_type'] + df_fg['fragment_ordinals'] + tmp
     df_fg = df_fg.groupby('psm_id', sort=False).agg(
         fg_mz=('fragment_mz_calculated', ';'.join),

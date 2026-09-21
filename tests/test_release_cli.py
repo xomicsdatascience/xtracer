@@ -102,6 +102,29 @@ class CommandLineReleaseTests(unittest.TestCase):
             self.assertEqual(command[headless_index + 1], 'false')
             self.assertEqual(Path(command[-1]), matched.resolve())
 
+    def test_gui_ctrl_c_exits_cleanly(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = [root / name for name in (
+                'sample.mbi', 'sample.mgf', 'results.sage.tsv', 'matched_fragments.sage.tsv'
+            )]
+            for path in paths:
+                path.touch()
+            with mock.patch.object(subprocess, 'run', side_effect=KeyboardInterrupt):
+                result = gui.main([
+                    '--mbi', str(paths[0]),
+                    '--mgf', str(paths[1]),
+                    '--sage-results', str(paths[2]),
+                    '--out-dir', str(root / 'logs'),
+                ])
+            self.assertEqual(result, 0)
+
+    def test_gui_normalizes_url_encoded_sage_filename(self):
+        self.assertEqual(
+            gui.normalize_sage_filename('sample%20name.mgf'),
+            'sample name.mgf',
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
