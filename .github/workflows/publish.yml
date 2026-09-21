@@ -34,7 +34,7 @@ jobs:
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
           package_version="$(python -c 'import xtracer; print(xtracer.__version__)')"
-          [[ "$tag_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$tag_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]]
           test "$tag_version" = "$package_version"
 
       - name: Build package
